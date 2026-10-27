@@ -7,7 +7,7 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   title: "Popular wallets", colWallet: "Wallet", colKind: "Type and owner", colNetworks: "Networks", colTotal: "Balance", more: "Show more",
   intro: "Thousands of known wallets: exchanges, funds, market makers, a government and well-known people. Names and logos come from the open labels. Open any to see its assets, history and transfers, and tap “Track” to keep it in your profile.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
@@ -71,14 +71,18 @@ function render() {
     row.dataset.address = item.address;
     row.addEventListener("click", (event) => { if (!event.target.closest("a, button")) location.href = addressUrl(item.address); });
     const who = node("td", "left");
-    const link = Object.assign(node("a", "ex-whale"), { href: addressUrl(item.address) });
-    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), node("b", "", item.name), node("span", "muted", shortAddress(item.address)));
-    who.append(link);
     const balance = balances.get(item.address);
+    const link = Object.assign(node("a", "ex-whale"), { href: addressUrl(item.address) });
+    // On a phone the balance stands under the name, so nothing hides past the screen's edge.
+    const mobile = node("small", "w-mobile-balance", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total));
+    const label = node("span", "w-label");
+    label.append(node("b", "", item.name), mobile);
+    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), label, node("span", "muted w-short", shortAddress(item.address)));
+    who.append(link);
     const networks = node("td", "left");
     networks.append(...(balance?.chains ?? []).map((chain) => chainDot(chain)));
     const tracked = saved.has(item.address.toLowerCase());
-    const track = node("button", `pill${tracked ? " on" : ""}`, tracked ? t().tracked : t().track);
+    const track = node("button", `pill w-track${tracked ? " on" : ""}`, tracked ? t().tracked : t().track);
     track.type = "button";
     track.addEventListener("click", () => void toggle(item.address));
     const action = node("td");
@@ -125,10 +129,11 @@ function watchRows() {
   for (const row of document.querySelectorAll("#rows tr[data-address]")) if (!balances.has(row.dataset.address)) seen.observe(row);
 }
 function pump() {
-  while (working < 2 && queue.length) {
+  while (working < 4 && queue.length) {
     const address = queue.shift();
     working += 1;
-    void fetch(`/market/chain/address/${encodeURIComponent(address)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null)
+    // A wallet that takes over half a minute shows "—" instead of loading for ever.
+    void fetch(`/market/chain/address/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(30_000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null)
       .then((data) => {
         balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
           chains: [...new Set(data.assets.map((asset) => asset.chain))] } : null);

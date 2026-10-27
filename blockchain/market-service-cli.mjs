@@ -9,6 +9,7 @@ import process from "node:process";
 import { createAccounts } from "./market-accounts.mjs";
 import { createChain, fetchExplorer } from "./market-chain.mjs";
 import { createOpenSea } from "./market-opensea.mjs";
+import { createScreener } from "./market-screener.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 
@@ -46,6 +47,8 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
   labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos,
   // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
   opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }) });
+// The trend screener reads the exchanges' public futures tickers once a minute.
+const screener = fixture ? null : createScreener({ get: fetchExplorer });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {
@@ -55,9 +58,10 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain });
+} : { accounts, chain, screener });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();
+screener?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

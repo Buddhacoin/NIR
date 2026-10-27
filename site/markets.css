@@ -356,7 +356,7 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
 @media (max-width: 700px) {
   /* Phones: laid out like the market apps — compact figures, underlined tabs,
      a three-column list (coin, price, 24h with a sparkline) and a bottom bar. */
-  body { padding-bottom: calc(72px + env(safe-area-inset-bottom)); }
+  body { padding-bottom: calc(92px + env(safe-area-inset-bottom)); }
   .nirbar { display: none; }
   .top { gap: 8px; padding: 12px 16px; }
   .brand { gap: 8px; font-size: 23px; }
@@ -416,10 +416,14 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   tbody td:nth-child(4) { font-size: 16px; }
   .m-spark { display: block; width: 76px; height: 26px; margin: 0 0 4px auto; }
 
-  .tabbar { position: fixed; right: 0; bottom: 0; left: 0; z-index: 20; display: grid; grid-template-columns: repeat(5, 1fr);
-    padding: 6px 4px calc(6px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); background: var(--bg); }
-  .tabbar a { display: grid; justify-items: center; gap: 3px; padding: 4px 0; color: var(--muted); font-size: 11px; font-weight: 650; }
-  .tabbar a.on { color: var(--accent); }
+  /* The bottom menu floats as a glass bubble over the page, as in the big phone apps. */
+  .tabbar { position: fixed; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); left: 12px; z-index: 20; display: grid;
+    grid-template-columns: repeat(5, 1fr); padding: 6px; border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 60%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%); }
+  .tabbar a { display: grid; justify-items: center; gap: 2px; padding: 7px 0 6px; border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 650;
+    transition: background 0.2s, color 0.2s; }
+  .tabbar a.on { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
   .tabbar svg, .tabbar img { width: 24px; height: 24px; }
 
   .pill.account { display: none; } /* the bottom bar has Sign in / Profile */
@@ -1019,3 +1023,89 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 /* Under TradingView's chart only the dividing line, no empty strip. */
 .coin-page #chart:has(.big-chart.tv) { padding-bottom: 0; }
 .coin-page #chart .chart-note:empty { display: none; }
+/* The trend screener (/screener/): changes coloured by their size, the chosen period marked. */
+.sc-table td, .sc-table th { white-space: nowrap; }
+.sc-table td.sc-ch { --heat: 0; font-variant-numeric: tabular-nums; font-weight: 650; }
+.sc-table td.sc-ch.up { background: color-mix(in srgb, var(--up) calc(var(--heat) * 28%), transparent); }
+.sc-table td.sc-ch.down { background: color-mix(in srgb, var(--down) calc(var(--heat) * 28%), transparent); }
+.sc-table td.sc-ch.on { font-weight: 850; }
+.sc-table th.sc-frame { color: var(--accent); }
+.sc-table .sc-exchanges { font-size: 12px; }
+.sc-table .sc-mobile { display: none; }
+@media (max-width: 700px) {
+  /* A phone keeps the coin (with the chosen period's change under it), the price and the volume. */
+  .sc-table th:nth-child(n+4):not(:nth-child(10)), .sc-table td:nth-child(n+4):not(:nth-child(10)), .sc-table th:first-child, .sc-table td:first-child { display: none; }
+  .sc-table .coin-cell { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; }
+  .sc-table .coin-cell .logo { grid-row: span 2; }
+  .sc-table .sc-mobile { display: block; font-size: 12px; font-weight: 700; }
+  .screener .pf-chart-head .seg, .screener .ex-filters .seg { max-width: 100%; }
+}
+/* Popular wallets on a phone: the wallet with its balance under the name, and a star to track it. */
+.w-label { display: inline-grid; min-width: 0; }
+.w-mobile-balance { display: none; }
+@media (max-width: 700px) {
+  .ex-wallets th:nth-child(5), .ex-wallets td:nth-child(5) { display: none; }
+  .ex-wallets .w-mobile-balance { display: block; color: var(--muted); font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .ex-wallets .w-label b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52vw; }
+  .ex-wallets td:nth-child(2) { width: 100%; }
+  .ex-wallets .pill.w-track { padding: 6px 10px; font-size: 0; }
+  .ex-wallets .pill.w-track::before { content: "☆"; font-size: 18px; }
+  .ex-wallets .pill.w-track.on::before { content: "★"; color: var(--gold); }
+}
+/* Portfolio: the lines under the total, and on a phone the layout of the market apps — the name
+   switches portfolios from a sheet at the bottom, a round + adds, the range spans the width, and
+   the assets show coin, price with the day's change, and holdings. */
+.pf-switch { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: default; }
+.pf-switch > span { display: none; }
+.pf-lines { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 4px; color: var(--muted); font-size: 14px; }
+.pf-lines b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.pf-plus { display: none; }
+.m-only { display: none; }
+.pf-sheet-back { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; background: #0007; }
+.pf-sheet-back[hidden] { display: none; }
+.pf-sheet { width: 100%; max-height: 80vh; padding: 10px 16px calc(16px + env(safe-area-inset-bottom)); overflow-y: auto; border-radius: 20px 20px 0 0; background: var(--card); }
+.pf-grip { display: block; width: 44px; height: 5px; margin: 0 auto 12px; border-radius: 3px; background: var(--line); }
+.pf-sheet-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.pf-sheet-row.on { background: var(--soft); border-radius: 12px; }
+.pf-sheet-row .pf-icon { width: 40px; height: 40px; flex: none; }
+.pf-sheet-name { flex: 1; min-width: 0; overflow: hidden; font-size: 17px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.pf-sheet-sum { display: grid; justify-items: end; gap: 2px; font-variant-numeric: tabular-nums; }
+.pf-sheet-sum b { font-size: 17px; }
+.pf-sheet-sum small { font-size: 13px; font-weight: 700; }
+.pf-sheet-title { display: block; padding: 14px 4px 4px; color: var(--muted); font-weight: 700; }
+.pf-sheet-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+@media (max-width: 700px) {
+  .pf-side { display: none; }
+  .pf-switch { cursor: pointer; }
+  .pf-switch > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--soft); color: var(--muted); font-size: 15px; }
+  .pf-switch small { color: var(--text); font-size: 22px; font-weight: 800; }
+  .pf-title > .pf-icon, .pf-title > span:first-child { display: none; }
+  .pf-top { position: relative; align-items: flex-start; }
+  .pf-balance-line #balance-change { display: none; }
+  .pf-lines { display: grid; gap: 2px; }
+  .pf-buttons { position: absolute; top: 44px; right: 0; width: auto; }
+  .pf-buttons #add, .pf-buttons #export { display: none; }
+  .pf-plus { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 12px; background: var(--soft); color: var(--text); font-size: 26px; cursor: pointer; }
+  .pf-plus[hidden] { display: none; }
+  .pf-charts { display: block; }
+  .pf-chart-card { padding: 4px 0 0; border: 0; background: none; box-shadow: none; }
+  :root[data-theme] .pf-chart-card { box-shadow: none; }
+  .pf-chart-card h2, .pf-perf { display: none; }
+  .pf-chart-card .pf-chart-head { display: grid; gap: 8px; }
+  .pf-chart-card .seg { display: flex; width: 100%; }
+  .pf-chart-card .seg button { flex: 1; justify-content: center; }
+  .pf-stats { grid-template-columns: 1fr 1fr; }
+  .pf-table th:last-child, .pf-table td:last-child { display: none; }
+  .pf-table .m-only { display: block; }
+  .pf-table td { vertical-align: top; }
+}
+
+/* Pull to refresh (common.js): the page's own gesture replaces the browser's, so it works in the home-screen app too. */
+html.touch { overscroll-behavior-y: contain; }
+.ptr { position: fixed; top: -44px; left: 50%; z-index: 200; width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 20px; color: var(--muted); background: var(--panel);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18); opacity: 0; transform: translate(-50%, 0); pointer-events: none; }
+.ptr.show { opacity: 1; }
+.ptr.ready { color: var(--accent); }
+.ptr.spin { animation: ptr-spin 0.8s linear infinite; }
+@keyframes ptr-spin { from { transform: translate(-50%, 70px) rotate(0); } to { transform: translate(-50%, 70px) rotate(360deg); } }

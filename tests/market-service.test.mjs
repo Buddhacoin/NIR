@@ -288,3 +288,30 @@ test("trending tokens borrowing a large coin's ticker are left out", () => {
   const trending = [{ id: "fake-zeus", symbol: "ZEUS" }, { id: "hera", symbol: "HERA" }, { id: "olympus", symbol: "OLY" }];
   assert.deepEqual(withoutLookalikes(trending, coins).map((coin) => coin.id), ["hera", "olympus"]);
 });
+
+test("the trend screener merges the exchanges' futures markets by coin and fills short-term changes from its own snapshots", async () => {
+  const { createScreener, readExchange, merge } = await import("../blockchain/market-screener.mjs");
+  const bitget = { data: [{ symbol: "ZEUSUSDT", lastPr: "10", change24h: "0.05", high24h: "11", low24h: "9", usdtVolume: "1000000", holdingAmount: "50000", fundingRate: "0.0001" }] };
+  const gate = [{ contract: "ZEUS_USDT", last: "10.1", change_percentage: "4", high_24h: "11", low_24h: "9", volume_24h_quote: "300000", total_size: "1000", quanto_multiplier: "10", funding_rate: "0.0003" },
+    { contract: "HERA_USDT", last: "500", change_percentage: "1", volume_24h_quote: "10" }];
+  assert.deepEqual(readExchange("bitget", bitget)[0], { symbol: "ZEUS", price: 10, change24h: 5, high: 11, low: 9, volume: 1_000_000, oi: 500_000, funding: 0.01 });
+  const [zeus] = merge({ bitget: readExchange("bitget", bitget), gate: readExchange("gate", gate) }).filter((coin) => coin.symbol === "ZEUS");
+  assert.equal(zeus.price, 10, "the busiest market sets the price");
+  assert.equal(zeus.volume, 1_300_000);
+  assert.equal(zeus.oi, 500_000 + 101_000);
+  assert.ok(Math.abs(zeus.funding - (0.01 * 1_000_000 + 0.03 * 300_000) / 1_300_000) < 1e-12, "funding weighted by volume");
+  assert.deepEqual(zeus.exchanges, ["bitget", "gate"]);
+
+  let clock = 1_700_000_000_000;
+  let price = "10";
+  const get = async (url) => (url.includes("bitget") ? { data: [{ ...bitget.data[0], lastPr: price }] } : null);
+  const screener = createScreener({ get, now: () => clock });
+  await screener.poll();
+  assert.equal(screener.snapshot().rows[0].ch5m, null, "no history yet");
+  clock += 5 * 60_000;
+  price = "11";
+  await screener.poll();
+  const row = screener.snapshot().rows[0];
+  assert.ok(Math.abs(row.ch5m - 10) < 1e-9, "10% over five minutes");
+  assert.equal(row.ch1h, null);
+});

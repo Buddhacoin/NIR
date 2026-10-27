@@ -257,7 +257,7 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }) } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null } = {}) {
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
   const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
@@ -480,6 +480,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (chain && await chain.handle(request, response, url)) return;
     // Live trades in a coin's busiest exchange pool (blockchain/market-trades.mjs).
     if (await trades.handle(request, response, url)) return;
+    // The trend screener over the exchanges' futures markets (blockchain/market-screener.mjs).
+    if (screener && await screener.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
     // GET /market/coins?ids=a,b,… — chosen coins' rows (a watchlist beyond the top hundred), 50 at most.
     if (request.method === "GET" && url.pathname === "/market/coins" && url.searchParams.has("ids")) {

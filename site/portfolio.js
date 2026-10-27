@@ -13,8 +13,9 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   guestNote: "Portfolios are kept in this browser.", guestSign: "Sign in with Google to have them on all your devices →",
+  day: "24h:", allTimeShort: "All time:", editShort: "Edit", addShort: "+ Add",
   overview: "Overview", myPortfolios: "My portfolios", createPortfolio: "+ Create portfolio", addTx: "+ Add transaction", export: "Export",
   holdingsTitle: "Holdings", r1: "24h", r7: "7d", r30: "30d", r90: "90d", rAll: "All", history: "History", allocation: "Allocation",
   performance: "Performance", allTime: "All-time profit", btcTrend: "BTC trend", costBasis: "Cost basis", best: "Best performer",
@@ -525,7 +526,10 @@ function renderAssets(list) {
     actions.append(tools);
     const cells = [percentCell(item.change1h), percentCell(item.change24h), percentCell(item.change7d)];
     for (const cell of cells) cell.classList.add("hide-s");
-    row.append(name, node("td", "", Number.isFinite(item.price) ? price(item.price) : "—"), ...cells, holding,
+    // The price with the day's change under it (seen on a phone, where the change columns hide).
+    const priceCell = node("td");
+    priceCell.append(node("b", "pf-price", Number.isFinite(item.price) ? price(item.price) : "—"), node("small", `pf-sub m-only ${changeClass(item.change24h)}`, percentText(item.change24h)));
+    row.append(name, priceCell, ...cells, holding,
       node("td", "hide-s", item.average === null ? "—" : hide ? t().hidden : price(item.average)), result, actions);
     row.addEventListener("click", (event) => { if (!event.target.closest("a, button")) { tab = "transactions"; txCoin = item.id; render(); } });
     return row;
@@ -579,6 +583,14 @@ function render() {
   const list = holdings();
   const sum = totals(list);
   $("#balance").textContent = money(sum.value);
+  // Under the total, as in the market apps: the day's change and the result for all time, in dollars and percent.
+  const lineText = (dollars, pct) => (list.length ? `${signedMoney(dollars)} ${percentText(pct)}` : "—");
+  $("#day-line").textContent = lineText(sum.day, sum.dayPct);
+  $("#day-line").className = changeClass(sum.day);
+  $("#all-line").textContent = lineText(sum.profit, sum.invested > 0 ? sum.profit / sum.invested * 100 : null);
+  $("#all-line").className = changeClass(sum.profit);
+  $("#add-round").hidden = !portfolios.length;
+  if (!$("#sheet").hidden) renderSheet();
   setChange($("#balance-change"), list.length ? sum.dayPct : null, `${percentText(sum.dayPct)} (24 ${language === "en" ? "h" : "ч"})`);
   $("#eye").classList.toggle("on", hide);
   $("#export").hidden = !chosen().length;
@@ -627,6 +639,31 @@ function render() {
   renderTransactions();
   void renderCharts(list);
 }
+
+// --- The portfolio list on a phone: a sheet from the bottom with every portfolio, its value and day's change.
+function renderSheet() {
+  const line = (icon, label, list, chosenHere, choose) => {
+    const sum = totals(list);
+    const row = node("button", `pf-sheet-row${chosenHere ? " on" : ""}`);
+    row.type = "button";
+    const right = node("span", "pf-sheet-sum");
+    right.append(node("b", "", money(sum.value)), node("small", changeClass(sum.day), list.length ? `${signedMoney(sum.day)} ${percentText(sum.dayPct)}` : ""));
+    row.append(icon, node("span", "pf-sheet-name", label), right);
+    row.addEventListener("click", () => { choose(); $("#sheet").hidden = true; render(); });
+    return row;
+  };
+  $("#sheet-list").replaceChildren(
+    line($("#overview .pf-icon").cloneNode(true), language === "en" ? "All portfolios" : "Все портфели", holdings(records), selected === "all",
+      () => { selected = "all"; store.set("nir-portfolio-selected", "all"); }),
+    node("small", "pf-sheet-title", language === "en" ? "Mine" : "Моё"),
+    ...portfolios.map((folder) => line(folderIcon(folder.name), folder.name, holdings(records.filter((record) => record.portfolioId === folder.id)),
+      String(selected) === String(folder.id), () => { selected = folder.id; store.set("nir-portfolio-selected", String(folder.id)); })));
+}
+$("#switch").addEventListener("click", () => { if (!matchMedia("(max-width: 700px)").matches) return; renderSheet(); $("#sheet").hidden = false; });
+$("#sheet").addEventListener("click", (event) => { if (event.target === $("#sheet")) $("#sheet").hidden = true; });
+$("#sheet-add").addEventListener("click", () => { $("#sheet").hidden = true; void askCreate(); });
+$("#sheet-edit").addEventListener("click", () => { $("#sheet").hidden = true; editingFolders = true; const folder = portfolios.find((item) => String(item.id) === String(selected)); if (folder) void askRename(folder); });
+$("#add-round").addEventListener("click", () => $("#add").click());
 
 // --- The transaction dialog, as on the market sites: Buy, Sell or Transfer; the coin from a list
 // with search; quantity, price per coin, date, fee and notes; and the total.
