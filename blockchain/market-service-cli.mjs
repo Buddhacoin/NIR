@@ -63,7 +63,7 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain, screener });
+} : { accounts, chain, screener, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();

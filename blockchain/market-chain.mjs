@@ -552,6 +552,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const cursor = url.searchParams.get("cursor");
         const page = await names.directory(url.searchParams.get("group") ?? "", cursor && /^0x[0-9a-fA-F]{40}$/.test(cursor) ? cursor : null);
         if (!page) return reply(response, 404, { error: "unknown group" }), true;
+        // A token's own contract is no wallet (a fund's token carries the fund's name): those are left out.
+        const ids = await nodes.coinIds().catch(() => null);
+        if (ids?.contract) page.items = page.items.filter((item) => !ids.contract.has(String(item.address).toLowerCase()));
         return reply(response, 200, page, 3600), true;
       }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.

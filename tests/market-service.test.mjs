@@ -339,3 +339,26 @@ test("the trend screener fills four hours from the exchanges' candles and keeps 
   await again.poll();
   assert.ok(again.snapshot().rows[0].ch4h > 15, "a restart keeps the history");
 });
+
+test("coin pages fetched before are kept on disk and answer at once after a restart", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const cacheFile = join(mkdtempSync(join(tmpdir(), "nir-cache-")), "cache.db");
+  const open = async (fetchImpl) => {
+    const service = createMarketService({ fetch: fetchImpl, cacheFile });
+    await new Promise((resolve) => service.server.listen(0, "127.0.0.1", resolve));
+    return { service, base: `http://127.0.0.1:${service.server.address().port}` };
+  };
+  const first = await open(async (url) => fromFixtures(url));
+  try {
+    assert.equal((await fetch(`${first.base}/market/coin/bitcoin`)).status, 200);
+  } finally { await new Promise((resolve) => first.service.server.close(resolve)); }
+  // The data source is down after the restart: the copy on disk still answers.
+  const second = await open(async () => { throw Object.assign(new Error("busy"), { status: 429 }); });
+  try {
+    const response = await fetch(`${second.base}/market/coin/bitcoin`);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).id, "bitcoin");
+  } finally { await new Promise((resolve) => second.service.server.close(resolve)); }
+});
