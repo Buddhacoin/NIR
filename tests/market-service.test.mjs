@@ -406,3 +406,39 @@ test("the screener reads Binance and Bybit too, and lists where a coin is cheape
   assert.equal(row.volume, 2_000_000, "the smaller of the two volumes");
   assert.equal(screener.snapshot().rows[0].markets, undefined, "the trend rows do not carry each exchange's prices");
 });
+
+test("liquidations from every exchange's stream add up by side, coin and period, each counted once", async () => {
+  const { createLiquidations, readLiquidations } = await import("../blockchain/market-liquidations.mjs");
+  const quote = "U" + "SDT";
+  const clock = 1_700_000_000_000;
+  // Binance: a forced SELL closes a long.
+  const binance = readLiquidations("binance", { o: { s: `ZEUS${quote}`, S: "SELL", ap: "10", z: "1000", T: clock - 60_000 } });
+  assert.deepEqual(binance, [{ exchange: "binance", symbol: "ZEUS", side: "long", price: 10, usd: 10_000, time: clock - 60_000 }]);
+  // Bybit: a Buy side is a long closed.
+  assert.equal(readLiquidations("bybit", { data: [{ s: `ZEUS${quote}`, S: "Sell", p: "10", v: "50", T: clock }] })[0].side, "short");
+  // OKX: contracts times their size in coins.
+  const okx = readLiquidations("okx", { data: [{ instId: `HERA-${quote}-SWAP`, details: [{ posSide: "short", bkPx: "2", sz: "100", ts: String(clock - 5 * 3_600_000) }] }] }, new Map([["HERA", 10]]));
+  assert.deepEqual([okx[0].side, okx[0].usd], ["short", 2_000]);
+  const liquidations = createLiquidations({ get: async () => null, now: () => clock });
+  liquidations.take([...binance, ...binance, ...okx]);
+  const view = liquidations.snapshot();
+  assert.deepEqual(view.totals.h1, { long: 10_000, short: 0 }, "the same liquidation counts once");
+  assert.deepEqual(view.totals.d1, { long: 10_000, short: 2_000 });
+  assert.equal(view.coins[0].symbol, "ZEUS");
+  assert.equal(view.recent.length, 1, "the last hour only");
+});
+
+test("a futures market that appears after the screener began watching an exchange is listed as new", async () => {
+  const { createScreener } = await import("../blockchain/market-screener.mjs");
+  let clock = 1_700_000_000_000;
+  let list = [{ symbol: "ZEUSUSDT", lastPr: "10", usdtVolume: "1000" }].map((item) => ({ ...item, symbol: item.symbol.replace("USDT", "U" + "SDT") }));
+  const get = async (url) => (url.includes("bitget") && url.includes("tickers") ? { data: list } : null);
+  const screener = createScreener({ get, now: () => clock });
+  await screener.poll();
+  assert.equal(screener.newListings().rows.length, 0, "the first list only counts as known");
+  clock += 60_000;
+  list = [...list, { symbol: "HERA" + "U" + "SDT", lastPr: "2", usdtVolume: "500" }];
+  await screener.poll();
+  const [listing] = screener.newListings().rows;
+  assert.deepEqual([listing.symbol, listing.exchange, listing.price, listing.at], ["HERA", "bitget", 2, clock]);
+});

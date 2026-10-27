@@ -343,7 +343,18 @@ its page (the explorer's coin lists, `coinOfSymbol`). The page picks the period 
 ready filters (gainers, losers, open interest rising, high funding, volatile),
 a minimum volume and a search, colours each change by its size and
 refreshes every half minute; on a phone it keeps the coin with the chosen
-period's change under it, the price and the volume. Arbitrage, liquidations and listings come next.
+period's change under it, the price and the volume. The liquidations screener (`/screener/liquidations/`,
+`blockchain/market-liquidations.mjs`, `GET /market/liquidations`) listens to the
+public streams of forced closes on the futures of Binance (every coin), Bybit
+(the 100 busiest) and OKX (every coin), and reads OKX's liquidation list for
+the 30 busiest coins every two minutes in case a stream is cut. The last day
+is kept and saved beside the accounts (`liquidations.json`): the longs and
+shorts closed over the hour, four hours and day, each coin's totals, and the
+last hour's events (each counted once even when a stream and the list both
+bring it). The new-listings screener (`/screener/listings/`, `GET
+/market/listings`) notes every futures market that appears on one of the six
+exchanges after the trend screener began watching it, with the coin's price
+then and now, for 30 days.
 
 `/screener/densities/` is the order-book density screener
 (`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit
@@ -540,11 +551,29 @@ profile) has a round bubbles button beside each wallet, and a wallet's page
 the "Bubbles: links" button.
 
 
+**Open books of labelled wallets**: once a week the names book also reads the
+open copies of Etherscan's labels for the main network, the Binance chain,
+Polygon, Arbitrum and Optimism (github.com/brianleect/etherscan-labels, MIT
+licence), about 40,000 named addresses; a name fills an address the book has
+no name for and never replaces one, and scam, phishing and similar labels
+are left out.
+
+**Satoshi Nakamoto** (`blockchain/market-patoshi.mjs`, `GET
+/market/chain/satoshi`, `patoshi.db`): the 21,953 early blocks that by Sergio
+Demian Lerner's "Patoshi" research Satoshi mined each paid 50 coins to a public
+key of their own (the list of keys from github.com/RandyMcMillan/patoshi-
+addresses). The service reads the list once, then asks mempool.space about
+each key (the SHA-256 of its pay-to-public-key script), one every half second,
+about three hours for all and again a month later. Keys not read yet count as
+their untouched 50 coins. His organisation page, his row in the popular list
+and his genesis address's page show the sum (about 1.1 million coins) and say
+that the attribution is the research's conclusion.
+
 **Organisations** (`/entity/?name=…`, `GET /market/chain/entity?name=…`,
 `GET /market/chain/entities?names=…`): every wallet the open labels' book
 knows for an organisation (its label names it, or its name starts with it,
 as in "Binance 14" or "Binance: Hot Wallet"; exploiters and deposit
-addresses left out), up to 40, plus its wallets in the popular list. The
+addresses left out), up to 80, plus its wallets in the popular list. The
 page reads their balances a few at a time and adds them up: the total, the
 assets by token and each wallet. A big organisation has more wallets than the
 open book knows, so the page says the real sum may be higher. In the popular

@@ -1214,3 +1214,25 @@ html.touch { overscroll-behavior-y: contain; }
 .dash-portfolios .dash-icon { padding: 6px 10px; }
 .w-entity { color: var(--accent); font-weight: 650; white-space: nowrap; }
 .profile-page .profile-tabs { margin: 4px 0 16px; }
+/* Liquidations (liquidations.js): the period's totals with a bar of longs against shorts, then coins and the latest ones side by side. */
+.lq-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 4px 0 2px; }
+.lq-total { display: grid; gap: 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; }
+.lq-total small { color: var(--muted); font-weight: 700; }
+.lq-total b { font-size: 20px; color: var(--text); }
+.lq-total.down b { color: var(--down); } .lq-total.up b { color: var(--up); }
+.lq-bar { grid-column: 1 / -1; height: 8px; border-radius: 99px; background: linear-gradient(90deg, var(--down) calc(var(--long) * 100%), var(--up) 0); }
+.lq-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+.lq-h { margin: 6px 0 8px; font-size: 15px; }
+.lq-feed-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.lq-strong { font-weight: 750; }
+.lq-ex { display: block; font-size: 11px; }
+.lq-feed td .coin-cell { display: inline-flex; }
+@media (max-width: 900px) { .lq-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) {
+  .lq-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .lq-total { padding: 9px 10px; } .lq-total b { font-size: 15px; }
+  .lq-table th, .lq-table td, .ls-table th, .ls-table td { display: table-cell !important; }
+  .lq-table :is(th, td):first-child { display: none !important; }
+  .ls-table :is(th, td):is(:nth-child(1), :nth-child(5), :nth-child(6)) { display: none !important; }
+  .lq-feed :is(th, td):nth-child(4) { display: none; }
+}

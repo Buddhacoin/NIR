@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Новые листинги — NIR Markets</title>
+  <meta name="description" content="Новые фьючерсные рынки на Binance, Bybit, OKX, Bitget, Gate и MEXC: когда монета появилась и как изменилась её цена. NIR Markets.">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="NIR Markets">
+  <meta name="theme-color" content="#000000">
+  <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
+  <link rel="stylesheet" href="/markets.css?v=57">
+</head>
+<body>
+  <div class="nirbar">
+    <span><span data-i18n="stCoins">Монет:</span> <b data-stat="coins">—</b></span>
+    <span><span data-i18n="stExchanges">Бирж:</span> <b data-stat="exchanges">—</b></span>
+    <a href="/charts/"><span data-i18n="stCap">Капитализация:</span> <b data-stat="cap">—</b> <em data-stat="capChange"></em></a>
+    <a href="/charts/"><span data-i18n="stVolume">Объём 24 ч:</span> <b data-stat="volume">—</b></a>
+    <a href="/charts/#dominance"><span data-i18n="stDominance">Доминация:</span> <b data-stat="dominance">—</b></a>
+    <a href="/charts/#fear-greed"><span data-i18n="stFear">Страх и жадность:</span> <b data-stat="fear">—</b></a>
+    <a class="nir" href="/nir/#start">⛏ <span data-i18n="stNir">Сеть NIR: майнеров</span> <b data-nir="miners">—</b> · <span data-i18n="stMined">намайнено</span> <b data-nir="mined">—</b> NIR</a>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
+    <nav aria-label="Разделы">
+      <a href="/" data-i18n="navCoins">Криптовалюты</a>
+      <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
+      <a href="/screener/" data-i18n="navScreener">Скринеры</a>
+    </nav>
+    <div class="quick" aria-label="Мои разделы">
+      <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
+      <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
+      <a href="/nir/"><img src="/nir-coin-icon.svg" alt="" width="16" height="16"><span data-i18n="navNir">О NIR</span></a>
+    </div>
+    <form id="search-form" class="search-form" action="/" role="search">
+      <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты или адреса" autocomplete="off">
+    </form>
+    <button class="pill find" id="find" type="button" aria-label="Поиск"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+    <button class="pill" id="theme" type="button" aria-label="Тема">☀︎</button>
+    <button class="pill" id="lang" type="button">EN</button>
+    <a class="pill account" id="account" hidden></a>
+  </header>
+
+  <main class="wrap explorer">
+    <article class="card ex-card screener">
+      <nav class="sc-tabs"><a href="/screener/" data-i18n="tabTrends">Тренды</a><a href="/screener/densities/" data-i18n="tabDensities">Плотности</a><a href="/screener/arbitrage/" data-i18n="tabArbitrage">Арбитраж</a><a href="/screener/liquidations/" data-i18n="tabLiquidations">Ликвидации</a><a class="on" href="/screener/listings/" data-i18n="tabListings">Листинги</a></nav>
+      <div class="pf-chart-head">
+        <h1 class="ex-title" data-i18n="title">Новые листинги</h1>
+        <input class="ex-token" id="filter" type="search" placeholder="Монета" autocomplete="off">
+      </div>
+      <div class="ex-filters"><div class="seg" id="exchanges"></div></div>
+      <p class="muted ex-note" id="note"></p>
+      <div class="table-wrap">
+        <table class="ex-table sc-table ls-table">
+          <thead><tr><th class="left">#</th><th class="left" data-sort="symbol" data-i18n="colCoin">Монета</th><th class="left" data-i18n="colExchange">Биржа</th><th data-sort="at" data-i18n="colWhen">Когда</th><th data-i18n="colThen">Цена при листинге</th><th data-i18n="colNow">Цена сейчас</th><th data-sort="change" data-i18n="colChange">Изменение</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <p class="muted ex-note" data-i18n="source">Данные: списки фьючерсных рынков Binance, Bybit, OKX, Bitget, Gate и MEXC, которые сервер читает каждую минуту. Листинг — монета, которая появилась на бирже после того, как сервер начал за ней следить.</p>
+    </article>
+  </main>
+
+  <footer>
+    <span>NIR Markets</span>
+    <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
+    <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
+    <a href="/terms/" data-i18n="terms">Условия</a>
+    <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
+  </footer>
+  <nav class="tabbar" aria-label="Меню">
+    <a href="/" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
+    <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
+    <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
+    <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
+    <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
+  </nav>
+  <script src="/common.js?v=28"></script>
+  <script src="/listings.js?v=1"></script>
+</body>
+</html>

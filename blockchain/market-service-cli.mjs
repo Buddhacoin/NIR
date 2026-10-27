@@ -12,6 +12,8 @@ import { createOpenSea } from "./market-opensea.mjs";
 import { createScreener } from "./market-screener.mjs";
 import { createLedger } from "./market-ledger.mjs";
 import { createDensities } from "./market-densities.mjs";
+import { createPatoshi } from "./market-patoshi.mjs";
+import { createLiquidations } from "./market-liquidations.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 
@@ -50,6 +52,9 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
   // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
   opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }),
   // NIR Markets' own store of wallet transfers (transfers.db), read back for the bubbles (market-ledger.mjs).
+  // Satoshi Nakamoto's early coins, read key by key into patoshi.db (market-patoshi.mjs).
+  patoshi: fixture ? null : createPatoshi({ get: fetchExplorer, file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "patoshi.db") : ":memory:",
+    getText: async (url) => { const response = await fetch(url, { signal: AbortSignal.timeout(60_000) }); if (!response.ok) throw new Error(`list answered ${response.status}`); return response.text(); } }),
   ledger: createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" }) });
 // The trend screener reads the exchanges' public futures tickers once a minute.
 // The screener keeps its price snapshots next to the accounts, so a restart does not empty the short-term columns.
@@ -58,6 +63,10 @@ const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (
 // The density screener reads the exchanges' futures order books, the screener's busiest coins first.
 const densities = fixture ? null : createDensities({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol),
   coins: () => screener?.snapshot().rows ?? [] });
+// Liquidations on Binance, Bybit and OKX, kept a day (liquidations.json beside the accounts).
+const liquidations = fixture ? null : createLiquidations({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol),
+  coins: () => screener?.snapshot().rows ?? [], file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "liquidations.json") : null,
+  read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {
@@ -67,11 +76,13 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain, screener, densities, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
+} : { accounts, chain, screener, densities, liquidations, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();
 screener?.start();
 densities?.start();
+liquidations?.start();
+chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

@@ -156,7 +156,41 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     return true;
   }
   // The background walk: a page every few seconds, never two at once, a failure waits a minute.
+  // Open books of labelled wallets (Etherscan's labels, copied under the MIT licence at
+  // github.com/brianleect/etherscan-labels), read once a week: a name fills an address the book has no
+  // name for, and never replaces one. Scam, phishing and similar labels are left out.
+  const BOOKS = ["etherscan", "bscscan", "polygonscan", "arbiscan", "optimism"]
+    .map((folder) => `https://raw.githubusercontent.com/brianleect/etherscan-labels/main/data/${folder}/combined/combinedAllLabels.json`);
+  const SKIP = /phish|hack|scam|exploit|heist|blocked|take-action|airdrop-hunter|spam|fake/i;
+  function importBook(book, source) {
+    const fill = sql(`INSERT INTO wallet_names (address, name, entity, site, logo, source, checked_at) VALUES (?, ?, NULL, NULL, NULL, ?, ?)
+      ON CONFLICT (address) DO UPDATE SET name = excluded.name, source = excluded.source WHERE wallet_names.name IS NULL`);
+    let added = 0;
+    db.exec("BEGIN");
+    try {
+      for (const [address, value] of Object.entries(book ?? {})) {
+        const name = clean(value?.name ?? "", 60);
+        const labels = Array.isArray(value?.labels) ? value.labels.join(" ") : "";
+        if (!EVM_ADDRESS.test(address) || !name || SKIP.test(`${name} ${labels}`)) continue;
+        added += Number(fill.run(address.toLowerCase(), name, source, now()).changes);
+      }
+      db.exec("COMMIT");
+    } catch (error) { db.exec("ROLLBACK"); throw error; }
+    known.clear();
+    return added;
+  }
+  let booksAt = 0;
+  async function importBooks() {
+    if (now() - booksAt < 7 * 86_400_000) return 0;
+    booksAt = now();
+    let added = 0;
+    for (const url of BOOKS) added += importBook(await get(url).catch(() => null), "open-book");
+    return added;
+  }
   function start(every = 5_000) {
+    void importBooks().catch(() => {});
+    const weekly = setInterval(() => { void importBooks().catch(() => {}); }, 86_400_000);
+    weekly.unref?.();
     let busy = false;
     let pauseUntil = 0;
     const timer = setInterval(() => {
@@ -197,5 +231,5 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
       .filter((row) => !/exploit|scam|phish|deposit/i.test(row.name))
       .map((row) => ({ address: row.address, name: row.name, logo: row.logo ?? null }));
   }
-  return { lookup, name, directory, remember, search, count, crawl, start, members };
+  return { lookup, name, directory, remember, search, count, crawl, start, members, importBook, importBooks };
 }

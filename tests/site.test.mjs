@@ -193,3 +193,16 @@ test("every page script parses", () => {
     assert.equal(result.status, 0, `site/${name}: ${result.stderr}`);
   }
 });
+
+test("the liquidations and listings pages have English for every text and read their server lists", () => {
+  for (const [page, script, api] of [["site/screener/liquidations/index.html", "site/liquidations.js", "/market/liquidations"], ["site/screener/listings/index.html", "site/listings.js", "/market/listings"]]) {
+    const html = read(page);
+    const code = read(script);
+    for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `${script}: no English text for ${key}`);
+    assert.ok(code.includes(`fetch("${api}")`));
+  }
+  for (const page of ["site/screener/index.html", "site/screener/densities/index.html", "site/screener/arbitrage/index.html"]) {
+    assert.match(read(page), /href="\/screener\/liquidations\/"/);
+    assert.match(read(page), /href="\/screener\/listings\/"/);
+  }
+});

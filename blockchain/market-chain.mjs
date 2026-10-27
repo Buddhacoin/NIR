@@ -93,7 +93,7 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null,
+  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null, patoshi = null,
   crawlGap = 400, crawlPages = 40 } = {}) {
   const cache = new Map();
   const pending = new Map();
@@ -559,13 +559,18 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       }
       // GET /market/chain/entity?name=…: an organisation's known wallets (the open labels' book);
       // GET /market/chain/entities?names=a,b,… (60 at most): how many each has.
+      // GET /market/chain/satoshi: Satoshi Nakamoto's early coins (market-patoshi.mjs).
+      if (path === "/market/chain/satoshi") {
+        if (!patoshi) return reply(response, 404, { error: "not kept here" }), true;
+        return reply(response, 200, { ...patoshi.summary(), price: nativePrice(UTXO.native) }, 60), true;
+      }
       if (path === "/market/chain/entity") {
         const name = (url.searchParams.get("name") ?? "").trim().slice(0, 60);
-        return reply(response, 200, { name, members: names.members(name, 40) }, 600), true;
+        return reply(response, 200, { name, members: names.members(name, 80) }, 600), true;
       }
       if (path === "/market/chain/entities") {
         const wanted = (url.searchParams.get("names") ?? "").split(",").map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 60).slice(0, 60);
-        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 40).length])) }, 600), true;
+        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 80).length])) }, 600), true;
       }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
       if (path === "/market/chain/names") {
@@ -622,5 +627,5 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }
