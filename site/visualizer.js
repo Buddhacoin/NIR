@@ -117,11 +117,12 @@ function layout() {
       if (from !== center && to !== center) continue;
       const other = from === center ? to : from;
       if (!other || other === center || ZERO.test(other)) continue;
-      const entry = sums.get(other) ?? { other, address: from === center ? item.to.address : item.from.address, in: 0, out: 0, count: 0, last: 0, chains: new Set() };
+      const entry = sums.get(other) ?? { other, address: from === center ? item.to.address : item.from.address, in: 0, out: 0, count: 0, last: 0, chains: new Set(), flows: [] };
       entry[to === center ? "in" : "out"] += item.usd ?? 0;
       entry.count += 1;
       entry.last = Math.max(entry.last, item.time ?? 0);
       entry.chains.add(item.chain);
+      entry.flows.push({ dir: to === center ? "in" : "out", usd: item.usd ?? 0, time: item.time ?? 0 });
       sums.set(other, entry);
     }
     const top = [...sums.values()].sort((left, right) => (filters.order === "time" ? right.last - left.last : right.in + right.out - left.in - left.out))
@@ -153,8 +154,16 @@ function clip(radius) {
   }
   return `url(#${id})`;
 }
-const radius = (item) => (item.key === lower(root) ? 30 : expanded.includes(item.key) ? 24 : Math.round(15 + Math.min(9, Math.log10(1 + item.usd))));
-const widthOf = (edge) => Math.max(1, Math.min(7, Math.log10(1 + edge.in + edge.out) - 1));
+const radius = (item) => (item.key === lower(root) ? 40 : expanded.includes(item.key) ? 32 : Math.round(25 + Math.min(7, Math.log10(1 + item.usd))));
+// Each transfer is a line of its own, as on the analytics sites; past this many the newest stand for the rest.
+const MAX_LINES = 24;
+const widthOf = (usd) => Math.max(0.8, Math.min(2.6, 0.5 + Math.log10(1 + usd) / 2.5));
+// The words inside a bubble with no picture: its name, or the start of its address.
+function inner(item) {
+  const text = label(item);
+  if (text === shortAddress(item.address)) return `${item.address.slice(0, 6)}…`;
+  return text.length > 10 ? `${text.slice(0, 9)}…` : text;
+}
 function label(item) {
   const party = parties.get(item.key) ?? { address: item.address };
   return party.name ?? openNames.get(item.key)?.name ?? (item.key === lower(root) ? rootInfo?.name : null) ?? shortAddress(item.address);
@@ -163,21 +172,23 @@ function draw() {
   $("#status").hidden = Boolean(shown.edges.length) && !failure;
   $("#status").textContent = failure || (loading.size ? t().loadingMore : !ADDRESS.test(root) ? t().missing : shown.edges.length ? "" : t().none);
   if (loading.size && shown.edges.length) { $("#status").hidden = false; $("#status").textContent = t().loadingMore; }
-  $("#edges").replaceChildren(...shown.edges.map((edge) => {
-    const line = svg("line", { class: `viz-edge ${edge.in >= edge.out ? "in" : "out"}`, "stroke-width": widthOf(edge).toFixed(1) });
-    line.dataset.from = edge.from;
-    line.dataset.to = edge.to;
-    return line;
+  $("#edges").replaceChildren(...shown.edges.flatMap((edge) => {
+    const flows = [...edge.flows].sort((left, right) => right.time - left.time).slice(0, MAX_LINES);
+    return flows.map((flow, index) => {
+      const line = svg("path", { class: `viz-edge ${flow.dir}`, fill: "none", "stroke-width": widthOf(flow.usd).toFixed(2) });
+      Object.assign(line.dataset, { from: edge.from, to: edge.to, index, count: flows.length });
+      return line;
+    });
   }));
   $("#nodes").replaceChildren(...shown.nodes.map((item) => {
     const party = { ...(parties.get(item.key) ?? { address: item.address }), ...(item.key === lower(root) && rootInfo ? { name: rootInfo.name, logo: rootInfo.logo } : {}) };
     const size = radius(item);
     const group = svg("g", { class: `viz-node${item.key === lower(root) ? " root" : ""}${expanded.includes(item.key) ? " open" : ""}${selected === item.key ? " on" : ""}${loading.has(item.key) ? " busy" : ""}` });
     group.dataset.key = item.key;
-    const hue = [...item.key].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
-    group.append(svg("circle", { class: "viz-ring", r: size + 3 }), svg("circle", { r: size, fill: `hsl(${hue} 45% 32%)` }));
-    const text = svg("text", { class: "viz-letter", "text-anchor": "middle", dy: "0.35em", "font-size": Math.round(size * 0.8) });
-    text.textContent = (label(item).replace(/^0x/, "").replace(/[^\p{L}\p{N}]/gu, "")[0] ?? "?").toUpperCase();
+    group.append(svg("circle", { class: "viz-ring", r: size + 3 }), svg("circle", { class: "viz-face", r: size }));
+    // The name or address sits inside the bubble; a picture, when there is one, covers it.
+    const text = svg("text", { class: "viz-inner", "text-anchor": "middle", dy: "0.35em", "font-size": (size * 0.36).toFixed(1) });
+    text.textContent = inner(item);
     group.append(text);
     const source = party.name || party.logo ? walletPicture({ ...party, address: item.address }) : null;
     if (source) {
@@ -185,22 +196,26 @@ function draw() {
       image.addEventListener("error", () => image.remove(), { once: true });
       group.append(image);
     }
-    const name = svg("text", { class: "viz-label", "text-anchor": "middle", y: size + 15 });
-    const text2 = label(item);
-    name.textContent = text2.length > 18 ? `${text2.slice(0, 17)}…` : text2;
-    group.append(name);
+    group.append(Object.assign(svg("title"), { textContent: label(item) }));
     return group;
   }));
   place();
   renderCard();
 }
 function place() {
+  // A wallet's transfers fan out as a sheaf of curves between the two bubbles.
   for (const line of $("#edges").children) {
     const from = pos.get(line.dataset.from);
     const to = pos.get(line.dataset.to);
     if (!from || !to) continue;
-    line.setAttribute("x1", from.x.toFixed(1)); line.setAttribute("y1", from.y.toFixed(1));
-    line.setAttribute("x2", to.x.toFixed(1)); line.setAttribute("y2", to.y.toFixed(1));
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.max(1, Math.hypot(dx, dy));
+    const spread = Math.min(9, 140 / Number(line.dataset.count));
+    const bend = (Number(line.dataset.index) - (Number(line.dataset.count) - 1) / 2) * spread;
+    const cx = (from.x + to.x) / 2 - (dy / length) * bend;
+    const cy = (from.y + to.y) / 2 + (dx / length) * bend;
+    line.setAttribute("d", `M${from.x.toFixed(1)} ${from.y.toFixed(1)}Q${cx.toFixed(1)} ${cy.toFixed(1)} ${to.x.toFixed(1)} ${to.y.toFixed(1)}`);
   }
   for (const group of $("#nodes").children) {
     const at = pos.get(group.dataset.key);
@@ -226,7 +241,7 @@ function step() {
       let dy = b.y - a.y;
       let distance = Math.hypot(dx, dy);
       if (distance < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; distance = 0.5; }
-      const room = items[i].size + items[j].size + 26;
+      const room = items[i].size + items[j].size + 18;
       const push = (2600 / (distance * distance) + (distance < room ? (room - distance) * 0.25 : 0)) * warmth;
       const fx = (dx / distance) * push;
       const fy = (dy / distance) * push;
@@ -239,7 +254,7 @@ function step() {
     const dx = b.x - a.x;
     const dy = b.y - a.y;
     const distance = Math.max(1, Math.hypot(dx, dy));
-    const pull = (distance - 170) * 0.03 * warmth;
+    const pull = (distance - 190) * 0.03 * warmth;
     a.vx += (dx / distance) * pull; a.vy += (dy / distance) * pull;
     b.vx -= (dx / distance) * pull; b.vy -= (dy / distance) * pull;
   }
@@ -364,7 +379,7 @@ async function toggle(key) {
   expanded.push(key);
   selected = key;
   layout();
-  await loadWallet(parties.get(key)?.address ?? key, 1);
+  await loadWallet(parties.get(key)?.address ?? key, 2);
 }
 function renderCard() {
   const card = $("#card");
@@ -435,7 +450,7 @@ async function start() {
     chains = utxo ? ["btc"] : (summary.networks ?? []).filter((item) => item.ok && item.active).map((item) => item.chain).filter((chain) => chain !== "btc");
   }
   render();
-  await loadWallet(root, 2);
+  await loadWallet(root, 5);
   render();
 }
 

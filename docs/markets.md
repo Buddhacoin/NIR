@@ -487,9 +487,10 @@ explorer requests a minute.
 
 **Visualizer** (`/visualizer/?address=…`, the "◉ Links" button on a wallet's
 page, `site/visualizer.js`): the wallet in the middle and the wallets it
-exchanged coins with around it, as bubbles with the open name's logo or the
-short address. A green line means coins came to the wallet, red that they
-left it; the thicker the line, the more dollars. Filters: how many links (25,
+exchanged coins with around it, as bubbles with the open name's logo, or
+its name or the start of its address written inside. Every transfer is a
+thin curve of its own (green: coins came to the wallet, red: they left it),
+so a busy pair shows as a sheaf of lines (the newest 24 of them). Filters: how many links (25,
 50, 100), by sum or by time, the smallest sum and the network. Bubbles can be
 dragged, the picture panned and zoomed (with two fingers on a phone); a
 bubble's card shows what passed between the two wallets and can expand that
