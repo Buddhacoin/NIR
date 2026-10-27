@@ -390,6 +390,28 @@ shown, the eight biggest big); a dollar mode sets and shows them in dollars.
 Settings stay in the browser. The chart is TradingView's Lightweight Charts
 (`site/vendor/lightweight-charts.js`, Apache 2.0, credited in the footer).
 
+The chart has tools along its left side, as on the trading terminals: a
+cursor, horizontal and trend lines, a ruler giving the move between two
+points in per cent, price and candles, erasing the drawings and fitting the
+whole chart, and indicators (volume, MA 20 and 50, EMA 200); drawings are kept
+in the browser for each exchange and pair. In the constructor each exchange
+may have its own smallest and big order (its gear beside its price). The
+statistics mode reads the exchange's daily candles: for the last 7, 14 and 30
+days the open, close, low, high, average daily volatility ((high − low) / open)
+and volume; today's expected range (its open ± the 7-day average volatility);
+and every day back as far as the candles go.
+
+Pages open at once, as in an app (`site/common.js`, `site/sw.js`): the last
+answers of the data a page starts from (the market overview, the visitor's
+portfolio, wallets and profile) are kept in the browser for a minute or two
+and handed to the page straight away while a fresh copy is fetched behind
+them, and any change the visitor makes drops their kept copies; the account
+as last seen draws the menus before the server answers; the service worker
+keeps versioned scripts and styles for good, answers a page from its kept
+copy when the server takes over a second, and fetches the bottom menu's pages
+and the visitor's data ahead while the browser is idle. Caddy marks versioned
+files immutable.
+
 `/screener/densities/` is the order-book density screener
 (`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit
 orders ("walls") in the perpetual futures books of Binance, Bybit, OKX and

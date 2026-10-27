@@ -11,8 +11,50 @@ const STABLE = new Set(["USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDE", "USDS", 
 const watch = new Set((store.get("nir-markets-watch") ?? "").split(",").filter(Boolean));
 // Signed in, the watchlist lives on the server (and follows the visitor to any
 // device); signed out, it stays in this browser.
-let account = { signIn: false, user: null };
+// The account as last seen in this browser draws the menus at once (signed in, the full bottom bar); the
+// server's answer follows. Nothing private beyond the name is kept.
+let account = (() => { try { return JSON.parse(store.get("nir-account") ?? "null") ?? { signIn: false, user: null }; } catch { return { signIn: false, user: null }; } })();
 let accountChanged = () => {};
+
+// --- Pages open at once, as in an app: the last answers of the data a page starts from (the market, the
+// visitor's portfolio, wallets and profile) are kept in this browser for a minute or two and given to the
+// page straight away, while a fresh copy is fetched behind them for the next look. Anything the visitor
+// changes (a POST, PUT, PATCH or DELETE of their own) drops their kept copies, so they never see an old one.
+const FAST = [[/^\/market\/overview$/, 120_000], [/^\/market\/stats$/, 300_000], [/^\/market\/sentiment$/, 300_000],
+  [/^\/market\/me\/(portfolio|addresses)$/, 90_000], [/^\/market\/u\/[^/]+$/, 90_000]];
+(() => {
+  const native = window.fetch.bind(window);
+  const keyOf = (url) => `nir-fast:${url.pathname}${url.search}`;
+  const forgetOwn = () => {
+    try { for (const key of Object.keys(localStorage)) if (/^nir-fast:\/market\/(me|u)\//.test(key)) localStorage.removeItem(key); } catch {}
+  };
+  window.fetch = (input, init = {}) => {
+    let url;
+    try { url = new URL(typeof input === "string" ? input : input.url, location.origin); } catch { return native(input, init); }
+    if (url.origin !== location.origin) return native(input, init);
+    const method = String(init.method ?? (typeof input === "string" ? "GET" : input.method) ?? "GET").toUpperCase();
+    if (method !== "GET") {
+      if (/^\/market\/(me|auth|labels|comments)/.test(url.pathname)) forgetOwn();
+      if (/^\/market\/auth/.test(url.pathname)) store.set("nir-account", "null");
+      return native(input, init);
+    }
+    const rule = FAST.find(([pattern]) => pattern.test(url.pathname));
+    if (!rule) return native(input, init);
+    const live = native(input, init).then(async (response) => {
+      if (response.ok) {
+        try { const text = await response.clone().text(); if (text.length < 600_000) localStorage.setItem(keyOf(url), JSON.stringify({ at: Date.now(), text })); } catch {}
+      }
+      return response;
+    });
+    let kept = null;
+    try { kept = JSON.parse(localStorage.getItem(keyOf(url)) ?? "null"); } catch {}
+    if (kept && Date.now() - kept.at < rule[1]) {
+      live.catch(() => {});
+      return Promise.resolve(new Response(kept.text, { status: 200, headers: { "content-type": "application/json" } }));
+    }
+    return live;
+  };
+})();
 const saveWatch = () => store.set("nir-markets-watch", [...watch].join(","));
 // The watchlist belongs to an account: signed out, a star leads to signing in.
 function toggleWatch(id) {
@@ -37,6 +79,9 @@ async function loadAccount() {
   const response = await fetch("/market/me", { cache: "no-store" }).catch(() => null);
   if (!response?.ok) return;
   account = await response.json();
+  // Kept for the next page's first draw: whether sign-in is on, and the visitor's public name and picture.
+  store.set("nir-account", JSON.stringify({ signIn: Boolean(account.signIn),
+    user: account.user ? { username: account.user.username, name: account.user.name ?? null, avatar: account.user.avatar ?? null } : null }));
   if (account.user) {
     // Stars set before signing in join the account once, then the server's list is the watchlist.
     const server = new Set(account.watchlist);
@@ -573,6 +618,26 @@ function addBackButton() {
   document.body.classList.add("inner-page");
 }
 
+// The service worker (sw.js) keeps the site's files and pages for instant moves between pages; once the
+// page is idle it fetches the bottom menu's pages ahead, and the visitor's own data for them.
+function warmUp() {
+  const later = window.requestIdleCallback ?? ((callback) => setTimeout(callback, 1_500));
+  later(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").then((registration) => {
+        const pages = [...document.querySelectorAll(".tabbar a[href^='/']")].map((link) => new URL(link.href).pathname).filter((path, index, all) => all.indexOf(path) === index);
+        (registration.active ?? registration.installing ?? registration.waiting)?.postMessage({ warm: pages });
+      }).catch(() => {});
+    }
+    // The data the next pages start from, into the kept answers (FAST above).
+    void fetch("/market/overview").catch(() => {});
+    if (account.user) {
+      void fetch("/market/me/portfolio", { cache: "no-store" }).catch(() => {});
+      void fetch(`/market/u/${encodeURIComponent(account.user.username)}`, { cache: "no-store" }).catch(() => {});
+    }
+  });
+}
+
 function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
   const en = { navScreener: "Screeners", ...own }; // words every page's header shares
   accountChanged = onAccount;
@@ -617,7 +682,7 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
   // A row of section tabs wider than the screen shows the open one.
   const openTab = document.querySelector(".sc-tabs a.on");
   if (openTab) openTab.parentElement.scrollLeft = openTab.offsetLeft - openTab.parentElement.offsetLeft - (openTab.parentElement.clientWidth - openTab.offsetWidth) / 2;
-  void loadAccount();
+  void loadAccount().finally(warmUp);
   void loadStrip();
   setInterval(loadNir, 60_000);
   setInterval(loadStrip, 60_000);

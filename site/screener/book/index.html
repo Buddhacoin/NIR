@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=79">
+  <link rel="stylesheet" href="/markets.css?v=82">
 </head>
 <body>
   <div class="nirbar">
@@ -67,10 +67,11 @@
       </div>
       <div class="bk-chart-box" id="chart-box">
         <div class="bk-chart-head"><span class="muted" id="chart-title"></span><div class="seg" id="tfs"></div></div>
-        <div class="bk-chart" id="chart"></div>
+        <div class="bk-chart-body"><div class="bk-chart-tools" id="chart-tools"></div><div class="bk-chart" id="chart"><div class="bk-measure" id="measure" hidden></div></div></div>
       </div>
       <p class="muted ex-note" id="status"></p>
       <div class="bk-books" id="books"></div>
+      <div class="bk-stats" id="stats" hidden></div>
       <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API и потоков бирж, обновляются каждые 2 секунды. Цены — настоящие уровни биржи; показаны ордера не меньше минимального в пределах глубины, крупные выделены строкой и жирным; итоги сверху — все ордера в пределах глубины. Наведите на строку, чтобы увидеть объём от цены до неё. Не финансовый совет.</p>
     </article>
   </main>
@@ -96,8 +97,8 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=37"></script>
+  <script src="/common.js?v=38"></script>
   <script src="/vendor/lightweight-charts.js?v=4.2.3"></script>
-  <script src="/book.js?v=7"></script>
+  <script src="/book.js?v=9"></script>
 </body>
 </html>

@@ -157,6 +157,11 @@ www.$SITE_DOMAIN {
 
 $SITE_DOMAIN {
   encode gzip
+  # Scripts and styles carry their version in the address (?v=…): browsers keep them for good.
+  @versioned query v=*
+  header @versioned Cache-Control "public, max-age=31536000, immutable"
+  @pictures path *.svg *.png *.ico *.jpg *.webp *.webmanifest
+  header @pictures Cache-Control "public, max-age=86400"
   handle_path /api/* {
     reverse_proxy 127.0.0.1:8787
   }

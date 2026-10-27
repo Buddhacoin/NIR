@@ -330,8 +330,10 @@ async function load() {
       const more = await fetch(`/market/coins?page=${page}`).then((answer) => (answer.ok ? answer.json() : null)).catch(() => null);
       if (more) pageCoins = more.coins;
     }
-    votes = (await fetch("/market/sentiment").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null))?.coins ?? votes;
+    // The list shows at once; the community's votes join it when they come.
     renderCards();
+    renderTable();
+    votes = (await fetch("/market/sentiment").then((answer) => (answer.ok ? answer.json() : null)).catch(() => null))?.coins ?? votes;
     renderTable();
   } catch {
     if (!data) $("#status").textContent = words[language].unavailable;

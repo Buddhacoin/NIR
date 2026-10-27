@@ -1453,3 +1453,44 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-sides { max-height: 78vh; overflow-y: auto; }
 .bk-side thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
 .bk-select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--text); font: inherit; }
+/* The chart library lays itself out with a table: the site's table styles stay out of it. */
+.bk-chart table, .bk-chart tr, .bk-chart td, .bk-chart th { margin: 0; padding: 0; border: 0; background: none; line-height: 0; }
+/* Phones: the watchlist alone, from the top: no cards' room above it, no footer under it. */
+@media (max-width: 700px) {
+  body.watching .tabs { margin-top: 0; }
+  body.watching main.wrap { padding-top: 0; }
+  body.watching footer, body.watching #pages { display: none; }
+}
+/* The chart's tools along its left side (book.js); the ruler's reading over the chart. */
+.bk-chart-body { display: flex; }
+.bk-chart-tools { display: flex; flex-direction: column; gap: 4px; padding: 8px 6px; border-right: 1px solid var(--line); }
+.bk-tool { min-width: 34px; height: 32px; padding: 0 6px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.bk-tool:hover { background: var(--soft); color: var(--text); }
+.bk-tool.on { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.bk-tool-gap { height: 1px; margin: 4px 2px; background: var(--line); }
+.bk-chart { position: relative; flex: 1; min-width: 0; }
+.bk-chart.drawing { cursor: crosshair; }
+.bk-measure { position: absolute; z-index: 3; padding: 5px 9px; border-radius: 8px; color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; white-space: nowrap; }
+.bk-measure.up { background: #16a96b; }
+.bk-measure.down { background: #e0394f; }
+.bk-measure[hidden] { display: none; }
+@media (max-width: 700px) {
+  .bk-chart-body { flex-direction: column; }
+  .bk-chart-tools { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
+  .bk-tool-gap { width: 1px; height: auto; margin: 2px 4px; }
+}
+/* Order book: an exchange's own thresholds in the constructor; the statistics mode. */
+.bk-own { margin-left: 8px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.bk-own:hover { border-color: var(--accent); color: var(--text); }
+.bk-stats { display: grid; gap: 18px; }
+.bk-stats[hidden] { display: none; }
+.bk-period h3 { margin: 0 0 10px; font-size: 16px; }
+.bk-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.bk-stat { display: grid; gap: 4px; padding: 12px 14px; border-radius: 12px; background: var(--soft); }
+.bk-stat small { font-size: 12px; }
+.bk-stat b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.bk-expected .bk-stat:nth-child(2) b { color: var(--down); }
+.bk-expected .bk-stat:nth-child(3) b { color: var(--up); }
+.bk-daily-wrap { max-height: 560px; overflow-y: auto; }
+.bk-daily { font-variant-numeric: tabular-nums; }
+.bk-daily thead th { position: sticky; top: 0; background: var(--card); }
