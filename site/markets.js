@@ -17,7 +17,7 @@ const en = {
   nirNoPrice: "no price yet — pioneers are mining", nirMinedShort: "NIR mined", mine: "Mine",
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
-  briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navPortfolio: "Portfolio", mineArrow: "Mine →",
+  briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", mineArrow: "Mine →",
   chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", risingNow: "Rising in 24h", altSeason: "Altcoin season · 7d", allTransfers: "All transfers", colSentiment: "Sentiment",
   dataBy: "Data:",
 };

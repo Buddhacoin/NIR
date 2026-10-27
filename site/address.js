@@ -8,12 +8,12 @@
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
-  navCoins: "Cryptocurrencies", navCharts: "Market overview", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
+  navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   loading: "Loading the address… a large wallet can take up to half a minute.", copy: "Copy", share: "Share", portfolio: "Portfolio", networks: "Assets by network",
   colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
   history: "Balance history", shares: "Asset shares", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
   colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
-  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name",
+  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name", visualize: "◉ Links",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
@@ -102,6 +102,7 @@ function renderHead() {
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;
   $("#address").textContent = address;
+  $("#visualize").href = `/visualizer/?address=${encodeURIComponent(address)}`;
   const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();

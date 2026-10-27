@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#0b0907">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=36">
+  <link rel="stylesheet" href="/markets.css?v=43">
 </head>
 <body>
   <div class="nirbar">
@@ -31,6 +31,7 @@
     <nav aria-label="Разделы">
       <a href="/" data-i18n="navCoins">Криптовалюты</a>
       <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
+      <a href="/screener/" data-i18n="navScreener">Скринеры</a>
     </nav>
     <div class="quick" aria-label="Мои разделы">
       <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
@@ -65,13 +66,16 @@
           <div class="pf-title">
             <span id="folder-icon"></span>
             <div>
-              <small id="folder-name"></small>
+              <!-- On a phone the name opens the list of portfolios (a sheet from the bottom), as in the market apps. -->
+              <button class="pf-switch" id="switch" type="button"><small id="folder-name"></small><span aria-hidden="true">⇅</span></button>
               <div class="pf-balance-line"><b id="balance">$0</b><span id="balance-change"></span>
                 <button class="pf-eye" id="eye" type="button" aria-label="Скрыть баланс"><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+              <div class="pf-lines"><span><span data-i18n="day">24 ч:</span> <b id="day-line"></b></span><span><span data-i18n="allTimeShort">Всё время:</span> <b id="all-line"></b></span></div>
             </div>
           </div>
           <div class="pf-buttons">
             <button class="act" id="add" type="button" data-i18n="addTx">+ Добавить сделку</button>
+            <button class="pf-plus" id="add-round" type="button" aria-label="Добавить сделку">+</button>
             <button class="act ghost" id="export" type="button" data-i18n="export">Экспорт</button>
             <span class="pf-menu-wrap"><button class="act ghost" id="more" type="button" aria-label="Ещё">⋯</button><span class="pf-menu" id="more-menu" hidden></span></span>
           </div>
@@ -140,6 +144,8 @@
       </section>
     </div>
   </main>
+  <div class="pf-sheet-back" id="sheet" hidden><div class="pf-sheet" role="dialog" aria-modal="true"><i class="pf-grip"></i><div id="sheet-list"></div>
+    <div class="pf-sheet-buttons"><button class="act ghost" id="sheet-edit" type="button" data-i18n="editShort">Изменить</button><button class="act ghost" id="sheet-add" type="button" data-i18n="addShort">+ Добавить</button></div></div></div>
 
   <footer>
     <span>NIR Markets</span>
@@ -156,7 +162,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=21"></script>
-  <script src="/portfolio.js?v=3"></script>
+  <script src="/common.js?v=23"></script>
+  <script src="/portfolio.js?v=4"></script>
 </body>
 </html>

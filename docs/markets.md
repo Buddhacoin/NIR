@@ -219,6 +219,18 @@ every portfolio's value and an Overview of them all. For the chosen one:
 - Assets (price, 1h/24h/7d change, holdings, average buy price, profit; every
   column sorts) and Transactions (type, coin, price, amount, date, fee, note).
 
+On a phone the page follows the market apps: the portfolio's name with ⇅
+opens a bottom sheet listing every portfolio with its value (plus Edit and
+Add), the balance stands with its 24-hour and all-time lines, the side list
+and the wide cards step aside, a round + adds a transaction, and each asset
+row keeps the price with its day change and the holdings. The popular
+wallets list likewise shows each wallet's balance under its name on a phone,
+so nothing has to be scrolled sideways.
+
+On every page a phone's bottom menu floats as a frosted glass bubble over the
+content, and pulling the page down from its top reloads it (also in the app
+saved to the home screen, where the browser's own gesture is missing).
+
 A transaction is a buy, a sale, or a transfer in or out: coins kept in a
 wallet elsewhere. "Change holdings" in a coin's menu takes the amount the
 visitor holds now and records the difference as a transfer. A coin can be
@@ -296,6 +308,26 @@ requests to an address a visitor picks.
 Limits: 50 alerts and 10 browsers per account, the last 100 firings kept. A
 browser whose push service says it has unsubscribed is dropped. Deleting the
 account deletes its alerts, firings and browsers.
+
+## Screeners
+
+`/screener/` (in the header menu and among the home page's tabs) is the trend
+screener (`blockchain/market-screener.mjs`, `GET /market/screener`): every
+perpetual futures market of the exchanges that answer without a key (Bitget,
+OKX, Gate, MEXC), merged by coin, about 800 coins. One request per exchange a
+minute brings price, the day's change, range and volume, open interest and
+funding for all of them; the busiest market sets price and change, volumes
+and open interest add up, funding is weighted by volume, and a market far
+off the busiest one's price (another coin under the same ticker) is left
+out. Changes over 5 and 15 minutes, 1 and 4 hours, and open interest over the
+hour and the day come from the server's own snapshots, one a minute kept for
+a day, so after a restart they fill in gradually (until an hour is in, the
+page orders by the day). The page picks the period that sets the order, has
+ready filters (gainers, losers, open interest rising, high funding, volatile),
+a minimum volume and a search, colours each change by its size and
+refreshes every half minute; on a phone it keeps the coin with the chosen
+period's change under it, the price and the volume. Order book densities,
+arbitrage, liquidations and listings come next.
 
 ## Wallets and transfers
 
@@ -451,6 +483,20 @@ explorer requests a minute.
 | POST | `/market/labels` | suggests `{ address, name, link? }` |
 | GET | `/market/labels/pending` | the queue, for moderators |
 | POST | `/market/labels/<id>/approve`, `/market/labels/<id>/reject` | a moderator's decision |
+
+
+**Visualizer** (`/visualizer/?address=…`, the "◉ Links" button on a wallet's
+page, `site/visualizer.js`): the wallet in the middle and the wallets it
+exchanged coins with around it, as bubbles with the open name's logo, or
+its name or the start of its address written inside. Every transfer is a
+thin curve of its own (green: coins came to the wallet, red: they left it),
+so a busy pair shows as a sheaf of lines (the newest 24 of them). Filters: how many links (25,
+50, 100), by sum or by time, the smallest sum and the network. Bubbles can be
+dragged, the picture panned and zoomed (with two fingers on a phone); a
+bubble's card shows what passed between the two wallets and can expand that
+wallet's own links in place, open its page or make it the centre. It reads
+the same transfer pages as the wallet's page, so it needs nothing new on the
+server.
 
 ## A coin's page
 

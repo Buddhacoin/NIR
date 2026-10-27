@@ -409,7 +409,8 @@ function isLight() {
   return document.documentElement.dataset.theme === "light" ||
     (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
 }
-function setupPage({ en, render, onTheme = () => {}, onAccount = render }) {
+function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
+  const en = { navScreener: "Screeners", ...own }; // words every page's header shares
   accountChanged = onAccount;
   const textNodes = [...document.querySelectorAll("[data-i18n]")];
   const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));
@@ -587,3 +588,33 @@ function setupSearch({ overview = () => null }) {
     if (event.target !== input && !box.contains(event.target) && !event.target.closest?.("#find")) box.hidden = true;
   });
 }
+
+// Pull to refresh on phones: drawing the page down from its very top reloads it, also in the app
+// saved to the home screen, where the browser's own gesture is missing.
+(() => {
+  if (!("ontouchstart" in window)) return;
+  document.documentElement.classList.add("touch");
+  const mark = Object.assign(document.createElement("div"), { className: "ptr", textContent: "↻" });
+  let start = null;
+  let pull = 0;
+  const reset = () => { start = null; pull = 0; mark.style.transform = ""; mark.classList.remove("ready", "show"); };
+  window.addEventListener("touchstart", (event) => {
+    if (window.scrollY > 0 || event.touches.length > 1 || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input")) return;
+    start = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+  }, { passive: true });
+  window.addEventListener("touchmove", (event) => {
+    if (!start) return;
+    const dx = event.touches[0].clientX - start.x;
+    const dy = event.touches[0].clientY - start.y;
+    if (dy <= 0 || Math.abs(dx) > dy || window.scrollY > 0) { reset(); return; }
+    if (!mark.isConnected) document.body.append(mark);
+    pull = Math.min(110, dy * 0.5);
+    mark.classList.add("show");
+    mark.classList.toggle("ready", pull >= 64);
+    mark.style.transform = `translate(-50%, ${pull}px) rotate(${pull * 4}deg)`;
+  }, { passive: true });
+  window.addEventListener("touchend", () => {
+    if (start && pull >= 64) { mark.classList.add("spin"); location.reload(); return; }
+    reset();
+  }, { passive: true });
+})();
