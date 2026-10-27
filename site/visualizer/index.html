@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Связи кошелька — NIR Markets</title>
   <meta name="description" content="Визуализатор связей кошелька: с кем адрес обменивался монетами, суммы входящих и исходящих переводов, раскрытие связей шаг за шагом. NIR Markets.">
+  <link rel="canonical" href="https://nircoin.com/visualizer/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Связи кошелька — NIR Markets">
+  <meta property="og:description" content="Визуализатор связей кошелька: с кем адрес обменивался монетами, суммы входящих и исходящих переводов, раскрытие связей шаг за шагом. NIR Markets.">
+  <meta property="og:url" content="https://nircoin.com/visualizer/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=83">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -65,12 +72,25 @@
       <div class="viz-card" id="card" hidden></div>
     </div>
     <p class="muted ex-note" data-i18n="vizNote">Зелёная линия — монеты пришли к кошельку, красная — ушли от него; чем толще линия, тем больше сумма. Пузыри можно двигать; нажмите на пузырь, чтобы раскрыть его связи или открыть кошелёк.</p>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Визуализатор показывает, с кем адрес обменивался монетами: каждый пузырь — контрагент, его размер — сумма переводов, линии — направление денег. Нажатие на пузырь раскрывает уже его связи, шаг за шагом.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>The visualizer shows whom an address exchanged coins with: each bubble is a counterparty, its size the sum of transfers, the lines the direction of the money. Clicking a bubble opens its own links, step by step.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
 
   <footer>
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -82,7 +102,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=38"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/visualizer.js?v=6"></script>
 </body>
 </html>

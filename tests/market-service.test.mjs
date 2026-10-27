@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createMarketService, normalizeCoin, normalizeCoins, withoutLookalikes } from "../blockchain/market-service.mjs";
+import { coinPage, siteBase, sitemap } from "../blockchain/market-seo.mjs";
 
 const fixture = (name) => JSON.parse(readFileSync(new URL(`./fixtures/market/${name}`, import.meta.url), "utf8"));
 const responses = { "coins/markets": "coins.json", "/global": "global.json", "search/trending": "trending.json", fng: "fng.json" };
@@ -530,4 +531,23 @@ test("Bybit's book comes from its stream: a snapshot, then changes; a depth it d
   ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "snapshot", data: { b: [["99", "2"], ["98", "1"]], a: [["101", "3"]], u: 10 } }) });
   ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "delta", data: { b: [["98", "0"], ["97", "4"]], a: [], u: 11 } }) });
   assert.deepEqual(deep.read("bybit-f", "ETHX").bids.sort((left, right) => right[0] - left[0]), [[99, 2], [97, 4]]);
+});
+
+test("search engines get a site map with every coin and a coin page with its name and price in the HTML", () => {
+  const coins = [{ id: "alpha", symbol: "ALP", name: "Alpha <One>", price: 1234.5, change24h: -2.5, marketCap: 3.2e9, volume: 4.5e6, rank: 7 }];
+  assert.equal(siteBase("nircoin.com"), "https://nircoin.com");
+  assert.equal(siteBase("evil.com/x"), "https://nircoin.com");
+  const map = sitemap("https://nircoin.com", coins);
+  assert.match(map, /<loc>https:\/\/nircoin\.com\/screener\/book\/<\/loc>/);
+  assert.match(map, /<loc>https:\/\/nircoin\.com\/coin\/alpha<\/loc>/);
+  const template = readFileSync(new URL("../site/coin/index.html", import.meta.url), "utf8");
+  const page = coinPage(template, "https://nircoin.com", "alpha", coins[0]);
+  assert.match(page, /<title>Alpha &lt;One&gt; \(ALP\) — цена/);
+  assert.match(page, /content="Курс Alpha &lt;One&gt; \(ALP\) сегодня: \$1,234\.5, −2\.50% за 24 ч\. Капитализация \$3\.20 млрд \(№7\)/);
+  assert.match(page, /<link rel="canonical" href="https:\/\/nircoin\.com\/coin\/alpha">/);
+  assert.match(page, /<h1 id="name">Alpha &lt;One&gt;<\/h1>/);
+  // A coin the server does not know keeps the page as it is, with its own address.
+  const unknown = coinPage(template, "https://nircoin.com", "beta", null);
+  assert.match(unknown, /<title>Монета — NIR Markets<\/title>/);
+  assert.match(unknown, /<link rel="canonical" href="https:\/\/nircoin\.com\/coin\/beta">/);
 });

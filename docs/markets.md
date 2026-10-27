@@ -29,6 +29,22 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Search engines
+
+The pages draw their figures in the browser, so what a crawler reads is in the
+HTML: each page has its title, description, canonical address and Open Graph
+tags, and each tool ends with a short "How it works" in both languages
+(`.explain`, the page's language shown). `/about/` lists every section and
+where its data comes from; the footer links it. `site/robots.txt` keeps
+crawlers out of the visitor's own pages (portfolio, alerts, profiles) and
+points at `/sitemap.xml`, which the market service writes
+(`blockchain/market-seo.mjs`, `GET /market/sitemap.xml`): the site's pages
+and every coin of the market list. A coin's page (`/coin/<id>`) comes from the
+service too (`GET /market/page/coin/<id>`): `site/coin/index.html` with the
+coin's name, price, change, market cap and volume in its title, description
+and heading; a coin outside the list gets the page as it is. Caddy passes both
+addresses to it.
+
 ## Design and navigation
 
 Day theme: white with a blue accent (#3861fb), thin grey dividers, green

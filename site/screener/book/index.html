@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Стакан — NIR Markets</title>
   <meta name="description" content="Стакан ордеров в реальном времени на 8 биржах, спот и фьючерсы: крупные заявки, лента сделок, уровни на графике и несколько бирж рядом. Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex, HitBTC.">
+  <link rel="canonical" href="https://nircoin.com/screener/book/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Стакан — NIR Markets">
+  <meta property="og:description" content="Стакан ордеров в реальном времени на 8 биржах, спот и фьючерсы: крупные заявки, лента сделок, уровни на графике и несколько бирж рядом. Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex, HitBTC.">
+  <meta property="og:url" content="https://nircoin.com/screener/book/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=83">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -74,6 +81,22 @@
       <div class="bk-stats" id="stats" hidden></div>
       <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API и потоков бирж, обновляются каждые 2 секунды. Цены — настоящие уровни биржи; показаны ордера не меньше минимального в пределах глубины, крупные выделены строкой и жирным; итоги сверху — все ордера в пределах глубины. Наведите на строку, чтобы увидеть объём от цены до неё. Не финансовый совет.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Стакан показывает лимитные заявки на покупку (зелёные) и продажу (красные) одной пары на Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex и HitBTC — спот и фьючерсы. Цены — собственные уровни биржи; крупные заявки выделены и нанесены уровнями на свечной график.</p>
+      <p>Глубина: Binance и Bybit — полный стакан из потока биржи; Coinbase, Bitstamp и HitBTC — весь стакан; OKX и Kraken — несколько процентов от цены. Данные обновляются каждые 2 секунды из открытых API бирж.</p>
+      <p>Конструктор ставит несколько бирж рядом, у каждой свои пороги крупной заявки. Режим статистики даёт среднюю волатильность, объём и ожидаемый диапазон дня по дневным свечам.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>The order book shows the buy (green) and sell (red) limit orders of one pair on Binance, Bybit, OKX, Coinbase, Kraken, Bitstamp, Bitfinex and HitBTC, spot and futures. Prices are the exchange's own levels; big orders are highlighted and drawn as levels on the candle chart.</p>
+      <p>Depth: Binance and Bybit keep the full book from the exchange's stream; Coinbase, Bitstamp and HitBTC give the whole book; OKX and Kraken a few per cent around the price. Data refreshes every 2 seconds from the exchanges' open APIs.</p>
+      <p>The constructor puts several exchanges side by side, each with its own big-order threshold. Statistics mode gives the average volatility, volume and the day's expected range from the daily candles.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
   <div class="bk-drawer-back" id="drawer" hidden>
     <aside class="bk-drawer" role="dialog" aria-modal="true">
@@ -86,6 +109,7 @@
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> <span data-i18n="exchangesCredit">открытые API бирж</span> · <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a></span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -97,7 +121,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=38"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/vendor/lightweight-charts.js?v=4.2.3"></script>
   <script src="/book.js?v=9"></script>
 </body>

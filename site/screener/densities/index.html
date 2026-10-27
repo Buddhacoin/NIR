@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Скринер плотностей — NIR Markets</title>
   <meta name="description" content="Скринер плотностей: крупные лимитные заявки в стаканах фьючерсов Binance, Bybit, OKX и Bitget — размер, расстояние до цены и сколько они стоят. NIR Markets.">
+  <link rel="canonical" href="https://nircoin.com/screener/densities/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Скринер плотностей — NIR Markets">
+  <meta property="og:description" content="Скринер плотностей: крупные лимитные заявки в стаканах фьючерсов Binance, Bybit, OKX и Bitget — размер, расстояние до цены и сколько они стоят. NIR Markets.">
+  <meta property="og:url" content="https://nircoin.com/screener/densities/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=83">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -74,12 +81,27 @@
       </div>
       <p class="muted ex-note" data-i18n="source">Данные: открытые стаканы фьючерсов Binance, Bybit, OKX и Bitget; сервер по очереди читает стаканы 100 самых торгуемых монет, примерно раз в минуту каждый. Плотность — уровень стакана в пределах 5% от цены, который в несколько раз больше среднего уровня рядом и не меньше $100 тыс. «Стоит» — сколько времени заявка держится на этой цене.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Плотности — крупные лимитные заявки («стены») в стаканах фьючерсов Binance, Bybit, OKX и Bitget. Заявка считается стеной, если она не дальше 5% от цены, стоит не меньше $100 тыс. и минимум вчетверо больше средней заявки рядом.</p>
+      <p>Видно сторону, размер, расстояние до цены и как давно стена стоит. Каждый стакан читается примерно раз в минуту, страница обновляется каждые 10 секунд.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>Densities are big limit orders ("walls") in the futures books of Binance, Bybit, OKX and Bitget. An order counts as a wall when it is within 5% of the price, worth at least $100K and at least four times the average order near it.</p>
+      <p>You see the side, size, distance to the price and how long the wall has stood. Each book is read about once a minute; the page refreshes every 10 seconds.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
 
   <footer>
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -91,7 +113,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=38"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/densities.js?v=5"></script>
 </body>
 </html>

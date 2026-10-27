@@ -639,7 +639,7 @@ function warmUp() {
 }
 
 function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
-  const en = { navScreener: "Screeners", ...own }; // words every page's header shares
+  const en = { navScreener: "Screeners", howItWorks: "How it works", ...own }; // words every page's header shares
   accountChanged = onAccount;
   const textNodes = [...document.querySelectorAll("[data-i18n]")];
   const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));

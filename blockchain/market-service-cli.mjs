@@ -4,6 +4,7 @@
 // --fixture <directory> serves recorded responses instead (for checks).
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 import { createAccounts } from "./market-accounts.mjs";
@@ -82,7 +83,9 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain, screener, densities, liquidations, book, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
+} : { accounts, chain, screener, densities, liquidations, book, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null,
+  // The coin page's HTML, for the copy with the coin's name and price in it (market-seo.mjs).
+  coinTemplate: () => { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "site", "coin", "index.html"), "utf8"); } catch { return null; } } });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();

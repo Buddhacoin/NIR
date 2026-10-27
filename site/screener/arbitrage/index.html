@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Скринер арбитража — NIR Markets</title>
   <meta name="description" content="Скринер арбитража: разница цены одной монеты на фьючерсах Binance, Bybit, OKX, Bitget, Gate и MEXC и разница их фандинга. NIR Markets.">
+  <link rel="canonical" href="https://nircoin.com/screener/arbitrage/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Скринер арбитража — NIR Markets">
+  <meta property="og:description" content="Скринер арбитража: разница цены одной монеты на фьючерсах Binance, Bybit, OKX, Bitget, Gate и MEXC и разница их фандинга. NIR Markets.">
+  <meta property="og:url" content="https://nircoin.com/screener/arbitrage/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=83">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -73,12 +80,25 @@
       </div>
       <p class="muted ex-note" data-i18n="source">Данные: открытые фьючерсные рынки Binance, Bybit, OKX, Bitget, Gate и MEXC, обновляются каждую минуту. Спред — насколько цена на самой дорогой бирже выше, чем на самой дешёвой; объём — меньший из двух. Монета под тем же тикером, но с ценой дальше 5%, считается другой монетой и не сравнивается. Учтите комиссии, перевод между биржами и фандинг: это не финансовый совет.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Скринер арбитража сравнивает цену одной монеты на фьючерсах Binance, Bybit, OKX, Bitget, Gate и MEXC: где она сейчас дешевле и дороже всего, разница в процентах, разница фандинга этих двух рынков и меньший из их объёмов. Таблица обновляется каждые 15 секунд.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>The arbitrage screener compares one coin's futures price on Binance, Bybit, OKX, Bitget, Gate and MEXC: where it is cheapest and dearest now, the gap in per cent, the funding gap between those two markets and the smaller of their volumes. The table refreshes every 15 seconds.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
 
   <footer>
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -90,7 +110,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=38"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/arbitrage.js?v=4"></script>
 </body>
 </html>

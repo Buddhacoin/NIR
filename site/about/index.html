@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Как работает NIR Markets — разделы и источники данных</title>
+  <meta name="description" content="Что показывает каждый раздел NIR Markets — курсы, обзор рынка, скринеры, стакан, ликвидации, переводы и кошельки — и откуда берутся данные.">
+  <link rel="canonical" href="https://nircoin.com/about/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Как работает NIR Markets — разделы и источники данных">
+  <meta property="og:description" content="Что показывает каждый раздел NIR Markets — курсы, обзор рынка, скринеры, стакан, ликвидации, переводы и кошельки — и откуда берутся данные.">
+  <meta property="og:url" content="https://nircoin.com/about/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="apple-mobile-web-app-title" content="NIR Markets">
+  <meta name="theme-color" content="#000000">
+  <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
+  <link rel="stylesheet" href="/markets.css?v=84">
+</head>
+<body>
+  <div class="nirbar">
+    <span><span data-i18n="stCoins">Монет:</span> <b data-stat="coins">—</b></span>
+    <span><span data-i18n="stExchanges">Бирж:</span> <b data-stat="exchanges">—</b></span>
+    <a href="/charts/"><span data-i18n="stCap">Капитализация:</span> <b data-stat="cap">—</b> <em data-stat="capChange"></em></a>
+    <a href="/charts/"><span data-i18n="stVolume">Объём 24 ч:</span> <b data-stat="volume">—</b></a>
+    <a href="/charts/#dominance"><span data-i18n="stDominance">Доминация:</span> <b data-stat="dominance">—</b></a>
+    <a href="/charts/#fear-greed"><span data-i18n="stFear">Страх и жадность:</span> <b data-stat="fear">—</b></a>
+    <a class="nir" href="/nir/#start">⛏ <span data-i18n="stNir">Сеть NIR: майнеров</span> <b data-nir="miners">—</b> · <span data-i18n="stMined">намайнено</span> <b data-nir="mined">—</b> NIR</a>
+  </div>
+
+  <header class="top">
+    <a class="brand" href="/" title="NIR Markets"><img src="/nir-coin-icon.svg" alt="" width="44" height="44">NIR <small>Markets</small></a>
+    <nav aria-label="Разделы">
+      <a href="/" data-i18n="navCoins">Криптовалюты</a>
+      <a href="/charts/" data-i18n="navCharts">Обзор рынка</a>
+      <a href="/screener/" data-i18n="navScreener">Скринеры</a>
+    </nav>
+    <div class="quick" aria-label="Мои разделы">
+      <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
+      <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
+      <a href="/nir/"><img src="/nir-coin-icon.svg" alt="" width="16" height="16"><span data-i18n="navNir">О NIR</span></a>
+    </div>
+    <form id="search-form" class="search-form" action="/" role="search">
+      <input id="search" class="search" name="q" type="search" placeholder="Поиск монеты или адреса" autocomplete="off">
+    </form>
+    <button class="pill find" id="find" type="button" aria-label="Поиск"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
+    <button class="pill" id="theme" type="button" aria-label="Тема">☀︎</button>
+    <button class="pill" id="lang" type="button">EN</button>
+    <a class="pill account" id="account" hidden></a>
+  </header>
+
+  <main class="wrap about">
+    <div lang="ru">
+      <h1>Как работает NIR Markets</h1>
+      <p class="muted">NIR Markets — бесплатный сайт о крипторынке: курсы, скринеры для трейдеров и аналитика кошельков. Без рекламы и трекеров.</p>
+      <section>
+        <h2>Разделы</h2>
+        <ul>
+          <li><b><a href="/">Криптовалюты</a></b> — Курсы 100 крупнейших монет: цена, изменения за час, сутки и неделю, капитализация, объём, график за 7 дней; монеты в тренде и лидеры роста.</li>
+          <li><b><a href="/charts/">Обзор рынка</a></b> — Общая капитализация, объём за сутки, доминация BTC и ETH, индекс страха и жадности с историей за год.</li>
+          <li><b><a href="/screener/">Скринер трендов</a></b> — Около 800 фьючерсов Bitget, OKX, Gate и MEXC: изменения от 5 минут до суток, объём, открытый интерес, фандинг.</li>
+          <li><b><a href="/screener/heatmap/">Тепловая карта</a></b> — Рынок одним экраном: размер — капитализация или объём, цвет — рост или падение.</li>
+          <li><b><a href="/screener/book/">Стакан</a></b> — Заявки одной пары на восьми биржах, спот и фьючерсы, с крупными заявками на графике, несколькими биржами рядом и статистикой по дням.</li>
+          <li><b><a href="/screener/densities/">Плотности</a></b> — Крупные лимитные заявки («стены») в стаканах фьючерсов Binance, Bybit, OKX и Bitget.</li>
+          <li><b><a href="/screener/liquidations/">Ликвидации</a></b> — Принудительные закрытия лонгов и шортов на Binance, Bybit и OKX за час, 4 часа и сутки.</li>
+          <li><b><a href="/screener/listings/">Новые листинги</a></b> — Новые фьючерсные рынки шести бирж и движение цены с момента появления.</li>
+          <li><b><a href="/screener/arbitrage/">Арбитраж</a></b> — Разница цены и фандинга одной монеты между фьючерсами шести бирж.</li>
+          <li><b><a href="/transfers/">Переводы</a></b> — Живая лента переводов в шести сетях с фильтрами по сумме, сети и токену.</li>
+          <li><b><a href="/wallets/">Кошельки</a></b> — Публичные кошельки бирж, фондов и известных людей; любой можно добавить в портфель и следить за ним.</li>
+          <li><b><a href="/visualizer/">Связи кошелька</a></b> — С кем адрес обменивался монетами — пузырями, шаг за шагом.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Откуда данные</h2>
+        <ul>
+          <li>Цены, капитализация и описания монет — CoinGecko, обновление каждую минуту; индекс страха и жадности — alternative.me.</li>
+          <li>Стаканы, сделки, свечи, фьючерсы, фандинг и ликвидации — открытые API и потоки бирж, без ключей.</li>
+          <li>Балансы и переводы кошельков — открытые обозреватели блоков и публичные узлы сетей.</li>
+          <li>Названия кошельков — открытые базы меток, подписи пользователей и распознавание по поведению: например, адрес, который пересылает всё на кошелёк биржи, считается адресом пополнения этой биржи.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Аккаунт</h2>
+        <p>Смотреть можно без регистрации. Вход через Google открывает избранное, портфель монет и кошельков, уведомления о цене и обсуждения. Какие данные хранятся — в <a href="/privacy/">политике конфиденциальности</a>.</p>
+        <p>Информация на сайте — не финансовый совет.</p>
+      </section>
+    </div>
+    <div lang="en">
+      <h1>How NIR Markets works</h1>
+      <p class="muted">NIR Markets is a free crypto market site: prices, screeners for traders and wallet analytics. No ads, no trackers.</p>
+      <section>
+        <h2>Sections</h2>
+        <ul>
+          <li><b><a href="/">Cryptocurrencies</a></b> — Prices of the 100 largest coins: price, hour, day and week changes, market cap, volume, a 7-day chart; trending coins and top gainers.</li>
+          <li><b><a href="/charts/">Market overview</a></b> — Total market cap, the day's volume, BTC and ETH dominance, the Fear & Greed index with a year of history.</li>
+          <li><b><a href="/screener/">Trend screener</a></b> — About 800 futures on Bitget, OKX, Gate and MEXC: changes from 5 minutes to a day, volume, open interest, funding.</li>
+          <li><b><a href="/screener/heatmap/">Heatmap</a></b> — The market on one screen: size is market cap or volume, colour is the rise or fall.</li>
+          <li><b><a href="/screener/book/">Order book</a></b> — One pair's orders on eight exchanges, spot and futures, with big orders on the chart, several exchanges side by side and daily statistics.</li>
+          <li><b><a href="/screener/densities/">Densities</a></b> — Big limit orders ("walls") in the futures books of Binance, Bybit, OKX and Bitget.</li>
+          <li><b><a href="/screener/liquidations/">Liquidations</a></b> — Forced closes of longs and shorts on Binance, Bybit and OKX over the hour, 4 hours and day.</li>
+          <li><b><a href="/screener/listings/">New listings</a></b> — New futures markets on six exchanges and the price move since they appeared.</li>
+          <li><b><a href="/screener/arbitrage/">Arbitrage</a></b> — The price and funding gap of one coin between the futures of six exchanges.</li>
+          <li><b><a href="/transfers/">Transfers</a></b> — A live feed of transfers on six networks with filters by size, network and token.</li>
+          <li><b><a href="/wallets/">Wallets</a></b> — Public wallets of exchanges, funds and well-known people; any can join your portfolio to be followed.</li>
+          <li><b><a href="/visualizer/">Wallet links</a></b> — Whom an address exchanged coins with, as bubbles, step by step.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Where the data comes from</h2>
+        <ul>
+          <li>Prices, market caps and coin descriptions: CoinGecko, refreshed every minute; the Fear &amp; Greed index: alternative.me.</li>
+          <li>Order books, trades, candles, futures, funding and liquidations: the exchanges' open APIs and streams, no keys.</li>
+          <li>Wallet balances and transfers: open block explorers and the networks' public nodes.</li>
+          <li>Wallet names: open label books, users' labels and recognition by behaviour; for example, an address that forwards everything to an exchange's wallet counts as that exchange's deposit address.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Account</h2>
+        <p>No sign-up is needed to look. Signing in with Google opens the watchlist, a portfolio of coins and wallets, price alerts and discussions. What is stored is in the <a href="/privacy/">privacy policy</a>.</p>
+        <p>Nothing on the site is financial advice.</p>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <span>NIR Markets</span>
+    <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
+    <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
+    <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
+    <a href="/terms/" data-i18n="terms">Условия</a>
+    <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
+  </footer>
+  <nav class="tabbar" aria-label="Меню">
+    <a href="/"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
+    <a href="/#watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
+    <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
+    <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
+    <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
+  </nav>
+  <script src="/common.js?v=39"></script>
+  <script src="/about.js?v=1"></script>
+</body>
+</html>

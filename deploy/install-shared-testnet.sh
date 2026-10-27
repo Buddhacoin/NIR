@@ -168,10 +168,15 @@ $SITE_DOMAIN {
   handle /market/* {
     reverse_proxy 127.0.0.1:8790
   }
+  # A coin's page comes from the market service with the coin's name and price in its HTML, for search
+  # engines (blockchain/market-seo.mjs); so does the site map.
   handle /coin/* {
-    root * $APP_DIR/site
-    rewrite * /coin/index.html
-    file_server
+    rewrite * /market/page{path}
+    reverse_proxy 127.0.0.1:8790
+  }
+  handle /sitemap.xml {
+    rewrite * /market/sitemap.xml
+    reverse_proxy 127.0.0.1:8790
   }
   handle /u/* {
     root * $APP_DIR/site

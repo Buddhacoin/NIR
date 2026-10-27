@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /market/me
+Disallow: /market/auth/
+Disallow: /portfolio/
+Disallow: /alerts/
+Disallow: /u/
+
+Sitemap: https://nircoin.com/sitemap.xml

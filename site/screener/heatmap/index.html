@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Тепловая карта — NIR Markets</title>
   <meta name="description" content="Тепловая карта криптовалют: размер — капитализация или объём, цвет — рост или падение за час, сутки или неделю. Спот и фьючерсы. NIR Markets.">
+  <link rel="canonical" href="https://nircoin.com/screener/heatmap/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="NIR Markets">
+  <meta property="og:title" content="Тепловая карта — NIR Markets">
+  <meta property="og:description" content="Тепловая карта криптовалют: размер — капитализация или объём, цвет — рост или падение за час, сутки или неделю. Спот и фьючерсы. NIR Markets.">
+  <meta property="og:url" content="https://nircoin.com/screener/heatmap/">
+  <meta property="og:image" content="https://nircoin.com/icon-512.png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
   <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -13,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=83">
+  <link rel="stylesheet" href="/markets.css?v=84">
 </head>
 <body>
   <div class="nirbar">
@@ -64,12 +71,27 @@
       </div>
       <p class="muted ex-note" data-i18n="source">Размер плитки — капитализация монеты (для фьючерсов — объём торгов за сутки), цвет — изменение цены за выбранный период: чем ярче, тем сильнее. Данные: CoinGecko (спот) и открытые фьючерсные рынки шести бирж.</p>
     </article>
+    <section class="explain">
+    <div lang="ru">
+      <h2>Как это работает</h2>
+      <p>Каждый прямоугольник — монета. На споте его размер — капитализация, на фьючерсах — объём за сутки; цвет — рост (зелёный) или падение (красный) за выбранный период.</p>
+      <p>Колесо мыши или два пальца приближают карту. Стейблкоины скрыты, пока их не включить. Данные: CoinGecko и скринер фьючерсов NIR Markets.</p>
+      <p><a href="/about/">Все разделы и источники данных →</a></p>
+    </div>
+    <div lang="en">
+      <h2>How it works</h2>
+      <p>Each rectangle is a coin. On spot its size is the market cap, on futures the day's volume; its colour is the rise (green) or fall (red) over the chosen period.</p>
+      <p>The mouse wheel or two fingers zoom in. Stablecoins are hidden unless turned on. Data: CoinGecko and the NIR Markets futures screener.</p>
+      <p><a href="/about/">Every section and data source →</a></p>
+    </div>
+  </section>
   </main>
 
   <footer>
     <span>NIR Markets</span>
     <span class="credit"><span data-i18n="dataBy">Данные:</span> CoinGecko</span>
     <span data-i18n="notAdvice">Не финансовый совет</span>
+    <a href="/about/" data-i18n="howItWorks">Как это работает</a>
     <a href="/privacy/" data-i18n="privacy">Конфиденциальность</a>
     <a href="/terms/" data-i18n="terms">Условия</a>
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
@@ -81,7 +103,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=38"></script>
+  <script src="/common.js?v=39"></script>
   <script src="/heatmap.js?v=6"></script>
 </body>
 </html>
