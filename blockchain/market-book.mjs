@@ -132,7 +132,10 @@ export function gatherBook({ bids, asks }, range = 0.9, buckets = 2000) {
   const ask = Math.min(...asks.map(([price]) => price));
   const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
   if (!price) return { price: null, step: null, bids: [], asks: [] };
-  const step = niceStep(price / buckets);
+  // The step follows how far the book reaches: a short book (a few hundred levels) keeps its own prices.
+  const within = (list) => list.map(([level]) => Math.abs(level - price)).filter((distance) => distance / price <= range);
+  const span = Math.max(price * 0.0005, ...within(bids), ...within(asks));
+  const step = niceStep(span / buckets);
   const digits = Math.max(0, -Math.floor(Math.log10(step)) + 2);
   const round = (value) => Number(value.toFixed(digits));
   const side = (list, down) => {
@@ -147,6 +150,7 @@ export function gatherBook({ bids, asks }, range = 0.9, buckets = 2000) {
   return { price: Number(price.toPrecision(10)), step, bids: side(bids, true), asks: side(asks, false) };
 }
 
+// Bybit's books from its stream too, 1,000 levels instead of its REST answer's 200 or 500.
 // Binance's books in full depth, as the order-book tools keep them: its open REST answer stops at 5,000
 // levels (1,000 on futures), so for a pair someone looks at the server keeps the exchange's stream of
 // every change to the book, on top of a snapshot (the exchange's documented way: buffer the stream, read
@@ -156,7 +160,11 @@ export function gatherBook({ bids, asks }, range = 0.9, buckets = 2000) {
 const STREAMS = {
   binance: { socket: (pair) => `wss://stream.binance.com:9443/ws/${pair.toLowerCase()}@depth@100ms`, futures: false },
   "binance-f": { socket: (pair) => `wss://fstream.binance.com/ws/${pair.toLowerCase()}@depth@100ms`, futures: true },
+  // Bybit's stream sends the book's first 1,000 levels and then their changes (its REST answer has 200 or 500).
+  bybit: { socket: () => "wss://stream.bybit.com/v5/public/spot", bybit: true },
+  "bybit-f": { socket: () => "wss://stream.bybit.com/v5/public/linear", bybit: true },
 };
+const BYBIT_DEPTHS = [1000, 500, 200];
 export function createDeep({ get, now = Date.now, socket = (url) => new WebSocket(url), keep = 30 * 60_000, refresh = 10 * 60_000,
   wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }) } = {}) {
   const books = new Map(); // "ex:pair" → { bids: Map, asks: Map, last, ready, seenAt, ws, buffer, warm }
@@ -192,6 +200,19 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
     apply(book, "asks", event.a);
     book.last = event.u;
   }
+  // Bybit: a snapshot replaces the book (also an update numbered 1, after its service restarts); a delta changes it.
+  function bybitChange(book, message) {
+    const data = message?.data;
+    if (!data || !String(message.topic ?? "").startsWith("orderbook.")) return;
+    if (message.type === "snapshot" || data.u === 1) {
+      book.bids.clear();
+      book.asks.clear();
+      book.ready = true;
+      book.syncedAt = now();
+    } else if (!book.ready) return;
+    apply(book, "bids", data.b);
+    apply(book, "asks", data.a);
+  }
   async function resync(book) {
     if (book.syncing) return;
     book.syncing = true;
@@ -222,14 +243,31 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
     book = { ex, pair, key, bids: new Map(), asks: new Map(), last: null, ready: false, buffer: [], seenAt: now(), warm, open: true,
       futures: STREAMS[ex].futures, snapshotUrl, syncedAt: 0 };
     books.set(key, book);
+    let depth = 0; // Bybit: which of its depths this pair's stream has (the deepest it accepts)
     const connect = () => {
       if (!book.open) return;
       let ws;
       try { ws = socket(STREAMS[ex].socket(pair)); } catch { setTimeout(connect, 15_000).unref?.(); return; }
       book.ws = ws;
-      ws.onopen = () => { void resync(book); };
-      ws.onmessage = (event) => { try { change(book, JSON.parse(event.data), book.futures); } catch {} };
+      let ping = null;
+      const subscribe = () => ws.send(JSON.stringify({ op: "subscribe", args: [`orderbook.${BYBIT_DEPTHS[depth]}.${pair}`] }));
+      ws.onopen = () => {
+        if (!STREAMS[ex].bybit) { void resync(book); return; }
+        subscribe();
+        ping = setInterval(() => { try { ws.send(JSON.stringify({ op: "ping" })); } catch {} }, 20_000);
+        ping.unref?.();
+      };
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (!STREAMS[ex].bybit) { change(book, message, book.futures); return; }
+          // A depth the market does not offer: the next smaller one.
+          if (message.op === "subscribe" && message.success === false && depth < BYBIT_DEPTHS.length - 1) { depth += 1; subscribe(); return; }
+          bybitChange(book, message);
+        } catch {}
+      };
       ws.onclose = ws.onerror = () => {
+        clearInterval(ping);
         try { ws.close(); } catch {}
         if (book.ws !== ws) return;
         book.ws = null;
@@ -250,7 +288,7 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
   function tick() {
     for (const book of [...books.values()]) {
       if (!book.warm && now() - book.seenAt > keep) { close(book); continue; }
-      if (book.ready && now() - book.syncedAt > refresh) void resync(book);
+      if (book.ready && !STREAMS[book.ex].bybit && now() - book.syncedAt > refresh) void resync(book);
     }
   }
   // The book as plain lists, once it is in step with the stream; null until then.
@@ -260,7 +298,7 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
     book.seenAt = now();
     return { bids: [...book.bids], asks: [...book.asks], levels: book.bids.size + book.asks.size };
   }
-  return { open, read, tick, close, books, change, snapshot };
+  return { open, read, tick, close, books, change, snapshot, bybitChange };
 }
 
 export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 20_000, deep = null } = {}) {

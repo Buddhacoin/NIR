@@ -4,7 +4,7 @@
 // within the depth, the big ones in bold — and the trades feed. The constructor shows the pair's books on
 // several exchanges side by side. Data: /market/book (blockchain/market-book.mjs), every two seconds.
 // The settings are kept in this browser. Shared helpers are in common.js; the chart is TradingView's
-// Lightweight Charts (site/vendor/lightweight-charts.js, Apache 2.0).
+// Lightweight Charts (site/vendor/lightweight-charts.js, Apache 2.0; its attribution is the link in the page's footer).
 
 const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
@@ -61,7 +61,15 @@ let candles = [];
 
 // --- Numbers: the step the book is shown in, the thresholds (automatic from the book when not set), the formats.
 const niceStep = (raw) => { const power = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((step) => step >= raw * 0.999); };
-const stepOf = (data) => cfg.step || Math.max(data.step, niceStep(data.price / 250));
+// The step follows how far the book reaches within the depth: a short book (a few hundred levels near the
+// price) shows its own prices, a full one gathers into round steps.
+function stepOf(data) {
+  if (cfg.step) return cfg.step;
+  const range = data.price * cfg.depth / 100;
+  const far = (list) => list.map(([price]) => Math.abs(price - data.price)).filter((distance) => distance <= range);
+  const span = Math.max(data.step, ...far(data.bids), ...far(data.asks));
+  return Math.max(data.step, niceStep(span / 300));
+}
 // A level's size in the unit the settings use: coins, or dollars in dollar mode.
 const sizeOf = (price, amount) => (cfg.usd ? price * amount : amount);
 function regroup(levels, step, down) {
@@ -242,7 +250,7 @@ let lines = [];
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 function ensureChart() {
   if (chart || !window.LightweightCharts || $("#chart-box").hidden) return;
-  chart = LightweightCharts.createChart($("#chart"), { autoSize: true, layout: { background: { color: "transparent" }, textColor: css("--muted") || "#8a93a6", attributionLogo: true },
+  chart = LightweightCharts.createChart($("#chart"), { autoSize: true, layout: { background: { color: "transparent" }, textColor: css("--muted") || "#8a93a6", attributionLogo: false },
     grid: { vertLines: { color: "rgba(128,128,128,.08)" }, horzLines: { color: "rgba(128,128,128,.08)" } }, rightPriceScale: { borderVisible: false },
     timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false }, crosshair: { mode: 0 } });
   series = chart.addCandlestickSeries({ upColor: "#16c784", downColor: "#ea3943", borderVisible: false, wickUpColor: "#16c784", wickDownColor: "#ea3943" });

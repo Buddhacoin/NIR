@@ -447,10 +447,11 @@ test("the order book screener gathers a book into price steps and reads each exc
   const { createBook, gatherBook, niceStep } = await import("../blockchain/market-book.mjs");
   assert.equal(niceStep(1.17), 2);
   assert.equal(niceStep(0.0031), 0.005);
-  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [10, 5]], asks: [[100.1, 3], [100.9, 4]] }, 0.5, 100);
-  assert.equal(gathered.step, 1);
-  assert.deepEqual(gathered.bids, [[99, 3]], "bids round down into their step; one far from the price is left out");
-  assert.deepEqual(gathered.asks, [[101, 7]], "asks round up");
+  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.1, 3], [100.9, 4]] }, 0.5, 100);
+  assert.equal(gathered.step, 0.5, "the step follows how far the book reaches (40 below the price, in a hundred steps)");
+  assert.deepEqual(gathered.bids, [[99.5, 1], [99, 2], [60, 5]], "bids round down into their step; one beyond the range is left out");
+  assert.deepEqual(gathered.asks, [[100.5, 3], [101, 4]], "asks round up");
+  assert.equal(gatherBook({ bids: [[99.99, 1]], asks: [[100.01, 1]] }, 0.5, 100).step, 0.0005, "a short book keeps fine prices");
   const asked = [];
   const get = async (url) => {
     asked.push(url);
@@ -509,4 +510,21 @@ test("Binance's book is kept in full depth from its stream of changes on top of 
   // Bitfinex at several precisions: each coarser layer adds only what lies beyond the finer one.
   assert.deepEqual(layered([{ bids: [[100, 1], [99, 1]], asks: [[101, 1]] }, { bids: [[100, 5], [90, 2]], asks: [[101, 9], [120, 3]] }]),
     { bids: [[100, 1], [99, 1], [90, 2]], asks: [[101, 1], [120, 3]] });
+});
+
+test("Bybit's book comes from its stream: a snapshot, then changes; a depth it does not offer falls back to a smaller one", async () => {
+  const { createDeep } = await import("../blockchain/market-book.mjs");
+  const sockets = [];
+  const deep = createDeep({ get: async () => null, socket: () => { const ws = { sent: [], send(text) { this.sent.push(JSON.parse(text)); }, close() {} }; sockets.push(ws); return ws; }, now: () => 0 });
+  deep.open("bybit-f", "ETHX", null);
+  const ws = sockets[0];
+  ws.onopen();
+  assert.deepEqual(ws.sent[0], { op: "subscribe", args: ["orderbook.1000.ETHX"] });
+  ws.onmessage({ data: JSON.stringify({ op: "subscribe", success: false }) });
+  assert.deepEqual(ws.sent[1], { op: "subscribe", args: ["orderbook.500.ETHX"] });
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "delta", data: { b: [["1", "1"]], a: [], u: 5 } }) });
+  assert.equal(deep.read("bybit-f", "ETHX"), null, "a change before the snapshot is not a book");
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "snapshot", data: { b: [["99", "2"], ["98", "1"]], a: [["101", "3"]], u: 10 } }) });
+  ws.onmessage({ data: JSON.stringify({ topic: "orderbook.500.ETHX", type: "delta", data: { b: [["98", "0"], ["97", "4"]], a: [], u: 11 } }) });
+  assert.deepEqual(deep.read("bybit-f", "ETHX").bids.sort((left, right) => right[0] - left[0]), [[99, 2], [97, 4]]);
 });
