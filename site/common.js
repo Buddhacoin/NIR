@@ -236,9 +236,13 @@ async function loadOpenNames(addresses) {
   for (const [address, value] of Object.entries(answer?.names ?? {})) openNames.set(address, value);
 }
 // A wallet's picture: the logo its label gives, the owner's site icon, or its name-service avatar.
+// Pictures of our own for a few names. Satoshi: the bust in Budapest, photo by Fekist, CC BY-SA 4.0
+// (commons.wikimedia.org/wiki/File:Bust_of_Satoshi_Nakamoto_in_Budapest.jpg), cropped.
+const NAME_PICTURES = { "Satoshi Nakamoto": "/satoshi.jpg" };
 function walletPicture(party) {
   const lower = party.address.toLowerCase();
   const whale = WHALE.get(lower);
+  if (NAME_PICTURES[party.name ?? whale?.name]) return NAME_PICTURES[party.name ?? whale?.name];
   if (party.logo) return party.logo;
   if (openNames.get(lower)?.logo) return openNames.get(lower).logo;
   if (whale?.site) return `${FAVICON}${whale.site}`;

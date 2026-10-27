@@ -29,7 +29,7 @@ const words = {
     listed: (names) => `В сети ${names} у адреса слишком много токенов для обозревателя: показаны токены 1000 крупнейших монет, прочитанные напрямую из сети; мелкие и редкие токены могут не войти.`,
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
     failed: (names) => `Сеть ${names} сейчас не отвечает.`, noTransfers: "Переводов не найдено.", noMatch: "Под фильтр ничего не подходит.", clearFilters: "Сбросить фильтры",
-    rangeFrom: "от", rangeTo: "до", rangeUsd: "Сумма в долларах", rangeAmount: "Количество токена", sortBy: "Порядок",
+    rangeFrom: "от", rangeTo: "до", rangeMin: "Минимум", rangeMax: "Максимум", rangeLabel: "Диапазон", rangeAny: "Любой", apply: "Применить", close: "Закрыть", rangeUsd: "Сумма в долларах", rangeAmount: "Количество токена", sortBy: "Порядок",
     sortDesc: "↓ Сначала крупные", sortAsc: "↑ Сначала мелкие", resetRange: "Сбросить",
     allTokens: "Все токены", partyFilter: "Адрес или имя", noCounter: "Пока нечего показать.",
     emptyWallet: "На шести сетях у адреса сейчас нет монет и токенов.", activity: (list) => `Активность: ${list}.`,
@@ -57,7 +57,7 @@ const words = {
     listed: (names) => `On ${names} the address holds too many tokens for the explorer: the tokens of the 1,000 largest coins are shown, read from the network itself; small and rare tokens may be missing.`,
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
     failed: (names) => `${names} is not answering right now.`, noTransfers: "No transfers found.", noMatch: "Nothing matches the filter.", clearFilters: "Clear filters",
-    rangeFrom: "from", rangeTo: "to", rangeUsd: "Dollar value", rangeAmount: "Token amount", sortBy: "Order",
+    rangeFrom: "from", rangeTo: "to", rangeMin: "Minimum", rangeMax: "Maximum", rangeLabel: "Range", rangeAny: "Any", apply: "Apply", close: "Close", rangeUsd: "Dollar value", rangeAmount: "Token amount", sortBy: "Order",
     sortDesc: "↓ Largest first", sortAsc: "↑ Smallest first", resetRange: "Reset",
     allTokens: "All tokens", partyFilter: "Address or name", noCounter: "Nothing to show yet.",
     emptyWallet: "The address holds no coins or tokens on the six networks right now.", activity: (list) => `Activity: ${list}.`,
@@ -422,44 +422,88 @@ let autoPages = 0;
 const filtered = () => Boolean(tfilter.from || tfilter.to || tfilter.token || tfilter.amount || tfilter.usd);
 const clearButton = () => { const button = node("button", "pill", t().clearFilters); button.type = "button";
   button.addEventListener("click", () => { tfilter.from = tfilter.to = ""; tfilter.token = tfilter.amount = tfilter.usd = null; renderTransfers(); }); return button; };
-// Value and dollars: a range from–to, a few quick thresholds, and the sort order.
+// Value and dollars, as on the analytics sites: a minimum and a maximum, a two-handled slider over the loaded
+// transfers' range (on a log scale), quick thresholds for dollars, the order, and Reset / Close / Apply.
 function rangeFilter(key, pop) {
   const band = tfilter[key] ?? { min: null, max: null };
-  const number = (text) => { const value = Number(String(text).replace(/\s/g, "").replace(",", ".")); return text.trim() && Number.isFinite(value) ? value : null; };
-  const field = (value, placeholder) => Object.assign(node("input", "ex-token"), { type: "text", inputMode: "decimal", value: value ?? "", placeholder });
-  const from = field(band.min, t().rangeFrom);
-  const to = field(band.max, t().rangeTo);
+  const number = (text) => { const value = Number(String(text).replace(/[\s$]/g, "").replace(",", ".")); return String(text).trim() && Number.isFinite(value) ? value : null; };
+  const short = (value) => (key === "usd" ? usdShort(value) : amountShort(value));
+  const top = Math.max(1, ...transfers.filter(worth).map((item) => item[key] ?? 0));
+  // Slider position 0…1000 ↔ value 0…top, log-spaced so small and large sums both get room.
+  const toValue = (position) => (position <= 0 ? 0 : position >= 1000 ? top : 10 ** (position / 1000 * Math.log10(top + 1)) - 1);
+  const toPosition = (value) => (value === null ? null : Math.round(Math.log10(Math.max(0, value) + 1) / Math.log10(top + 1) * 1000));
+  const box = (label, value) => {
+    const wrap = node("label", "ex-field");
+    const input = Object.assign(node("input", ""), { type: "text", inputMode: "decimal", value: value ?? "", placeholder: label });
+    wrap.append(node("small", "muted", label), node("span", "ex-field-box"));
+    if (key === "usd") wrap.lastChild.append(node("i", "", "$"));
+    wrap.lastChild.append(input);
+    return [wrap, input];
+  };
+  const [minWrap, from] = box(t().rangeMin, band.min);
+  const [maxWrap, to] = box(t().rangeMax, band.max);
+  const fields = node("div", "ex-range2");
+  fields.append(minWrap, maxWrap);
+  const low = Object.assign(node("input", ""), { type: "range", min: 0, max: 1000, step: 1, value: toPosition(band.min) ?? 0 });
+  const high = Object.assign(node("input", ""), { type: "range", min: 0, max: 1000, step: 1, value: toPosition(band.max) ?? 1000 });
+  const slider = node("div", "ex-slider");
+  const fill = node("i", "");
+  slider.append(fill, low, high);
+  const label = node("b", "");
+  const paint = () => {
+    const left = Number(low.value) / 10;
+    const right = Number(high.value) / 10;
+    fill.style.left = `${left}%`;
+    fill.style.right = `${100 - right}%`;
+    const min = number(from.value);
+    const max = number(to.value);
+    label.textContent = min === null && max === null ? t().rangeAny : `${min === null ? "0" : short(min)} – ${max === null ? "∞" : short(max)}`;
+  };
+  // The handles fill the fields, the fields move the handles.
+  const slide = (handle) => {
+    if (Number(low.value) > Number(high.value)) (handle === low ? low : high).value = handle === low ? high.value : low.value;
+    from.value = Number(low.value) <= 0 ? "" : String(Number(toValue(Number(low.value)).toPrecision(2)));
+    to.value = Number(high.value) >= 1000 ? "" : String(Number(toValue(Number(high.value)).toPrecision(2)));
+    paint();
+  };
+  low.addEventListener("input", () => slide(low));
+  high.addEventListener("input", () => slide(high));
+  for (const [input, handle, empty] of [[from, low, 0], [to, high, 1000]]) {
+    input.addEventListener("input", () => { handle.value = toPosition(number(input.value)) ?? empty; paint(); });
+  }
   const apply = () => {
     const min = number(from.value);
     const max = number(to.value);
     tfilter[key] = min === null && max === null ? null : { min, max };
     renderTransfers();
+    pop.remove();
   };
-  from.addEventListener("input", apply);
-  to.addEventListener("input", apply);
-  const fields = node("div", "ex-range");
-  fields.append(from, node("span", "muted", "—"), to);
+  for (const input of [from, to]) input.addEventListener("keydown", (event) => { if (event.key === "Enter") apply(); if (event.key === "Escape") pop.remove(); });
+  const range = node("div", "ex-range-head");
+  range.append(node("small", "muted", t().rangeLabel), label);
   const quick = node("div", "ex-quick");
   if (key === "usd") {
-    quick.append(...[[1, "$1"], [1_000, "$1K"], [10_000, "$10K"], [100_000, "$100K"], [1_000_000, "$1M"]].map(([value, label]) => {
-      const button = node("button", band.min === value && band.max === null ? "on" : "", `≥ ${label}`);
+    quick.append(...[[1_000, "$1K"], [10_000, "$10K"], [100_000, "$100K"], [1_000_000, "$1M"]].map(([value, text]) => {
+      const button = node("button", band.min === value && band.max === null ? "on" : "", `≥ ${text}`);
       button.type = "button";
-      button.addEventListener("click", () => { from.value = String(value); to.value = ""; apply(); pop.remove(); });
+      button.addEventListener("click", () => { from.value = String(value); to.value = ""; low.value = toPosition(value); high.value = 1000; paint(); });
       return button;
     }));
   }
   const order = node("div", "ex-quick");
-  order.append(...[[-1, t().sortDesc], [1, t().sortAsc]].map(([dir, label]) => {
-    const button = node("button", tsort.key === key && tsort.dir === dir ? "on" : "", label);
+  order.append(...[[-1, t().sortDesc], [1, t().sortAsc]].map(([dir, text]) => {
+    const button = node("button", tsort.key === key && tsort.dir === dir ? "on" : "", text);
     button.type = "button";
     button.addEventListener("click", () => { tsort.key = key; tsort.dir = dir; renderTransfers(); pop.remove(); });
     return button;
   }));
-  const reset = node("button", "", t().resetRange);
-  reset.type = "button";
-  reset.addEventListener("click", () => { tfilter[key] = null; renderTransfers(); pop.remove(); });
-  pop.classList.add("wide");
-  pop.append(node("small", "muted", key === "usd" ? t().rangeUsd : t().rangeAmount), fields, quick, node("small", "muted", t().sortBy), order, reset);
+  const foot = node("div", "ex-pop-foot");
+  const action = (text, className, click) => { const button = node("button", className, text); button.type = "button"; button.addEventListener("click", click); return button; };
+  foot.append(action(t().resetRange, "", () => { tfilter[key] = null; renderTransfers(); pop.remove(); }), node("span", ""),
+    action(t().close, "", () => pop.remove()), action(t().apply, "primary", apply));
+  pop.classList.add("wide", "range");
+  pop.append(fields, range, slider, ...(key === "usd" ? [quick] : []), node("small", "muted", t().sortBy), order, foot);
+  paint();
   setTimeout(() => from.focus());
 }
 // A header's filter: a field for the sender or receiver, the loaded tokens for the token column.
