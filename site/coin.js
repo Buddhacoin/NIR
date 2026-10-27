@@ -13,7 +13,7 @@ const en = {
   col1h: "1h", col24h: "24h", col7d: "7d", range24: "24h low and high", marketCap: "Market cap",
   volume24: "Volume 24h", volumeCap: "Volume / market cap", fdv: "Fully diluted value", circulating: "Circulating supply",
   supply: "Total / max supply", ath: "All-time high", atl: "All-time low", converter: "Converter",
-  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Markets", tabCommunity: "Discussion", community: "Discussion",
+  tabOverview: "Overview", tabAbout: "About", tabMarkets: "Exchanges", tabCommunity: "Discussion", community: "Discussion",
   tradesTitle: "Live trades", trTime: "Time", trType: "Type", trPrice: "Price (USD)", trTotal: "Total", trAmount: "Amount", trMaker: "Wallet",
   sortLatest: "Latest", sortTop: "Top", barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist",
   d1: "24h", d7: "7D", d30: "1M", d90: "3M", d365: "1Y", mPrice: "Price", mCap: "Market cap",

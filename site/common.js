@@ -413,7 +413,7 @@ function renderStrip() {
   if (bar && Number.isFinite(strip.users)) {
     let item = bar.querySelector(".users");
     if (!item) {
-      item = Object.assign(document.createElement("a"), { className: "users", href: "/u/me" });
+      item = Object.assign(document.createElement("span"), { className: "users" });
       item.append(document.createElement("span"), " ", document.createElement("b"));
       bar.prepend(item);
     }
