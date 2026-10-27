@@ -74,7 +74,7 @@ let failure = "";
 
 const t = () => words[language];
 // The TradingView chart for every coin: the exchange pair it trades on (Binance first, then the other
-// big exchanges TradingView carries), else the ticker against USDT, which TradingView finds by itself.
+// big exchanges TradingView carries), else, while its markets are unknown, the bare ticker pair.
 const TV_EXCHANGES = { binance: "BINANCE", bybit_spot: "BYBIT", okex: "OKX", gate: "GATEIO", kucoin: "KUCOIN", mxc: "MEXC", bitget: "BITGET", coinbase: "COINBASE", kraken: "KRAKEN" };
 function tradingViewSymbol() {
   if (!coin || STABLE.has(coin.symbol) || !/^[A-Z0-9]{1,20}$/.test(coin.symbol ?? "")) return null;
@@ -83,7 +83,9 @@ function tradingViewSymbol() {
     const ticker = (coin.tickers ?? []).find((item) => item.exchange === exchange && item.base === coin.symbol && ["USDT", "USD"].includes(item.target));
     if (ticker) return `${prefix}:${coin.symbol}${ticker.target}`;
   }
-  return `${coin.symbol}USDT`;
+  // The bare ticker only while the coin's markets are not known yet; a coin known to trade on no big
+  // exchange (a fund's token, say) keeps the line chart, which TradingView would only call missing.
+  return coin.partial ? `${coin.symbol}USDT` : null;
 }
 const host = (url) => new URL(url).hostname.replace(/^www\./, "");
 const amount = (value) => (value === null || value === undefined ? "—" : big(value, ""));

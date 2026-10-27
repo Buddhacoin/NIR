@@ -324,13 +324,30 @@ hour and the day come from the server's own snapshots, one a minute kept for
 a day; when the server starts, coins without four hours of them take five-minute
 candles from Bitget or Gate once (about 40 seconds for all), and the snapshots are
 saved beside the accounts database (`screener.json`) every ten minutes, so a
-restart keeps them. Each coin among the 1,000 largest gets its logo and a link to
+restart keeps them. Coin pages and charts fetched from CoinGecko are kept on disk
+too (`cache.db`), so after a restart a coin seen before opens at once from its copy
+while a fresh one is fetched behind it. Each coin among the 1,000 largest gets its logo and a link to
 its page (the explorer's coin lists, `coinOfSymbol`). The page picks the period that sets the order, has
 ready filters (gainers, losers, open interest rising, high funding, volatile),
 a minimum volume and a search, colours each change by its size and
 refreshes every half minute; on a phone it keeps the coin with the chosen
-period's change under it, the price and the volume. Order book densities,
-arbitrage, liquidations and listings come next.
+period's change under it, the price and the volume. Arbitrage, liquidations and listings come next.
+
+`/screener/densities/` is the order-book density screener
+(`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit
+orders ("walls") in the perpetual futures books of Binance, Bybit, OKX and
+Bitget, read without a key. Each exchange's books are read one after another
+at its own pace, well inside its public limits (about one a second on Binance,
+whose deep books weigh more, three a second elsewhere), the trend screener's
+100 busiest coins first, so each book is read about once a minute. A level
+within 5% of the price is a wall when it is worth at least $100K and a share
+of the coin's day volume, and at least four times the average level near
+the price; the biggest five a side are kept. A wall keeps the time its price
+was first seen, so the page shows how long it has stood. The page filters
+by side, exchange, size, distance and age, draws a bar behind each size,
+links each coin to its page and refreshes every ten seconds; on a phone it
+keeps the coin with the side and exchange under it, the size and the
+distance.
 
 ## Wallets and transfers
 
@@ -521,7 +538,8 @@ converter, a price chart for 1 day to 1 year with volume bars (TradingView
 candles; every coin TradingView knows opens on its full chart with drawing
 tools and indicators, the largest coin on its cross-exchange index and the
 rest on their pair on Binance or another big exchange TradingView carries, else on
-the bare ticker pair, which TradingView finds by itself, and the line chart stays one click away), the description (Russian when
+the bare ticker pair while its markets are not known yet (a coin known to trade on
+no big exchange, such as a fund's token, keeps the line chart), and the line chart stays one click away), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
 column shows only when some market has a rating). The page is one panel, its

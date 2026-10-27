@@ -8,7 +8,7 @@ const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
-  title: "Trend screener", colCoin: "Coin", colPrice: "Price", col1h: "1h", col4h: "4h", col24h: "24h", colRange: "24h range",
+  title: "Trend screener", tabTrends: "Trends", tabDensities: "Order book walls", colCoin: "Coin", colPrice: "Price", col1h: "1h", col4h: "4h", col24h: "24h", colRange: "24h range",
   colVolume: "24h volume", colOi: "Open interest", colOi1h: "OI 1h", colFunding: "Funding", colExchanges: "Exchanges",
   source: "Data: the open futures markets of Bitget, OKX, Gate and MEXC, updated every minute. Changes over 5 minutes to 4 hours come from the server's own price snapshots, so after a restart they fill in gradually.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",

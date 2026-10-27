@@ -1,11 +1,12 @@
 /* NIR Markets. Day: the white, blue-accented look of the big market sites.
-   Night: graphite with glass cards and a violet–mint accent. Orange stays only in the NIR coin. */
+   Night: near-black with neutral grey cards and a blue accent. Orange stays only in the NIR coin. */
 :root {
-  --bg: #07090f; --panel: #10131c; --panel2: #141826; --line: #ffffff14; --text: #eef1f6; --muted: #8a93a6;
-  --accent: #8b7bff; --accent2: #2ee6a6; --gold: #f5c45e; --up: #2ee6a6; --down: #ff5c7a;
-  --btn: linear-gradient(135deg, #7c5cff, #2ee6a6); --btn-text: #ffffff; --soft: #ffffff0d; --tint: #7c5cff22;
-  --card: #ffffff0a; --shadow: inset 0 1px 0 #ffffff12;
-  --page: radial-gradient(1200px 500px at 15% -10%, #2a1f6b55, transparent), radial-gradient(900px 500px at 95% 0, #0f5e6b44, transparent), #07090f;
+  /* Night follows the on-chain analytics sites: near-black, neutral greys, white text, a blue accent. */
+  --bg: #000000; --panel: #0e0e0f; --panel2: #141415; --line: #ffffff17; --text: #f2f2f2; --muted: #8e8e93;
+  --accent: #4d8dff; --accent2: #36d399; --gold: #f5c45e; --up: #2fc77a; --down: #ff4d5e;
+  --btn: #2f6bff; --btn-text: #ffffff; --soft: #ffffff0d; --tint: #4d8dff1f;
+  --card: #0e0e0f; --shadow: inset 0 0 0 1px #ffffff0f;
+  --page: #000000;
   color-scheme: dark; font-family: Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 }
 :root[data-theme="light"] {
@@ -1124,7 +1125,7 @@ html.touch { overscroll-behavior-y: contain; }
 .viz-chains { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .viz-chains button { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .viz-chains .chain-dot { width: 14px; height: 14px; }
-.viz-stage { position: relative; height: min(72vh, 760px); padding: 0; overflow: hidden; background: #05070d; touch-action: none; }
+.viz-stage { position: relative; height: min(72vh, 760px); padding: 0; overflow: hidden; background: #000; touch-action: none; }
 .viz-stage svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
 .viz-stage svg:active { cursor: grabbing; }
 .viz-edge { stroke-linecap: round; opacity: 0.6; }
@@ -1139,11 +1140,11 @@ html.touch { overscroll-behavior-y: contain; }
 @keyframes viz-spin { to { stroke-dashoffset: -22; } }
 .viz-face { fill: #3a3f4b; }
 .viz-inner { fill: #e3e7ef; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; pointer-events: none; }
-.viz-status { position: absolute; top: 12px; left: 12px; margin: 0; padding: 6px 12px; border-radius: 999px; background: #10131ccc; color: #8a93a6; font-size: 13px; pointer-events: none; }
+.viz-status { position: absolute; top: 12px; left: 12px; margin: 0; padding: 6px 12px; border-radius: 999px; background: #141415cc; color: #8a93a6; font-size: 13px; pointer-events: none; }
 .viz-zoom { position: absolute; right: 10px; top: 10px; display: grid; gap: 6px; }
-.viz-zoom .pill { width: 34px; height: 34px; padding: 0; justify-content: center; background: #10131ccc; color: #eef1f6; border-color: #ffffff22; }
+.viz-zoom .pill { width: 34px; height: 34px; padding: 0; justify-content: center; background: #141415cc; color: #eef1f6; border-color: #ffffff22; }
 .viz-card { position: absolute; left: 10px; bottom: 10px; width: min(340px, calc(100% - 20px)); padding: 12px; border: 1px solid #ffffff1f; border-radius: 16px;
-  background: #10131ce6; color: #eef1f6; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+  background: #141415e6; color: #eef1f6; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .viz-card-head { display: flex; align-items: center; gap: 10px; }
 .viz-card-head > div { display: grid; flex: 1; min-width: 0; }
 .viz-card-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1174,3 +1175,19 @@ html.touch { overscroll-behavior-y: contain; }
 @media (max-width: 700px) { .viz-link.wide { gap: 0; padding: 7px; font-size: 0; } }
 /* Signed in, the bell joins the phone's header: the brand drops its second word to make room. */
 @media (max-width: 600px) { .top:has(.pill.bell) .brand small { display: none; } }
+
+#theme svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; display: block; }
+#theme { color: var(--text); }
+
+/* The screeners' tabs, and the density table (densities.js): a bar behind each size, green for bids, red for asks. */
+.sc-tabs { display: flex; gap: 6px; margin: 0 0 12px; }
+.sc-tabs a { padding: 7px 14px; border-radius: 999px; color: var(--muted); font-weight: 700; }
+.sc-tabs a.on { background: var(--soft); color: var(--text); }
+.dn-table .dn-size { font-weight: 750; background: linear-gradient(to left, var(--dn-color) calc(var(--dn) * 100%), transparent 0); }
+.dn-table tr.dn-bid { --dn-color: color-mix(in srgb, var(--up) 18%, transparent); }
+.dn-table tr.dn-ask { --dn-color: color-mix(in srgb, var(--down) 18%, transparent); }
+@media (max-width: 700px) {
+  /* A phone keeps the coin (with the order's side under it), the size and the distance. */
+  .dn-table th, .dn-table td { display: table-cell !important; }
+  .dn-table :is(th, td):is(:nth-child(1), :nth-child(3), :nth-child(4), :nth-child(5), :nth-child(8), :nth-child(9)) { display: none !important; }
+}

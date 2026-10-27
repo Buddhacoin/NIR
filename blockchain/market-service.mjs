@@ -17,6 +17,7 @@
 // Sources: CoinGecko (prices, market, trending; credited on the page) and
 // alternative.me (Fear & Greed). COINGECKO_API_KEY adds a free demo key.
 import { createServer } from "node:http";
+import { DatabaseSync } from "node:sqlite";
 
 import { createTrades } from "./market-trades.mjs";
 
@@ -211,14 +212,32 @@ export function normalizeSearch(value) {
 // asking at once, and limited to `perMinute` fetches. When the limit is spent
 // a stale copy is served; with no copy at all the visitor is asked to retry.
 // `blocked()`: while true (CoinGecko asked to slow down) nothing new is fetched; copies are served.
-function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false }) {
+// `keep`: a copy on disk ({ load(key), save(key, entry) }), so a restart starts from what was fetched before.
+// A small key → JSON store in SQLite for createOnDemand's copies; the oldest go past 5,000.
+function createDiskCache(file) {
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS copies (key TEXT PRIMARY KEY, at INTEGER NOT NULL, value TEXT NOT NULL)");
+  const read = db.prepare("SELECT at, value FROM copies WHERE key = ?");
+  const write = db.prepare("INSERT INTO copies (key, at, value) VALUES (?, ?, ?) ON CONFLICT (key) DO UPDATE SET at = excluded.at, value = excluded.value");
+  const trim = db.prepare("DELETE FROM copies WHERE key IN (SELECT key FROM copies ORDER BY at DESC LIMIT -1 OFFSET 5000)");
+  let writes = 0;
+  return {
+    load(key) { const row = read.get(key); return row ? { at: Number(row.at), value: JSON.parse(row.value) } : null; },
+    save(key, entry) { write.run(key, entry.at, JSON.stringify(entry.value)); if (++writes % 200 === 0) trim.run(); },
+  };
+}
+function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false, keep = null }) {
   const entries = new Map();
   const pending = new Map();
   let fetches = [];
   // An expired copy is served at once while a fresh one is fetched behind it, so a page never waits
   // for the data source on a coin it has seen before.
   return async function lookup(key, url, normalize, ttlMs) {
-    const entry = entries.get(key);
+    let entry = entries.get(key);
+    if (!entry && keep) {
+      try { entry = keep.load(key) ?? undefined; } catch {}
+      if (entry) entries.set(key, entry);
+    }
     if (entry && now() - entry.at < ttlMs) return entry;
     if (entry && !entry.missing) {
       if (!pending.has(key)) void fetchEntry(key, url, normalize, entry, ttlMs).catch(() => {});
@@ -249,6 +268,7 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
       entries.delete(key);
       entries.set(key, fresh);
       if (entries.size > maxEntries) entries.delete(entries.keys().next().value);
+      if (keep && !fresh.missing) { try { keep.save(key, fresh); } catch {} }
       return fresh;
     })();
     pending.set(key, job);
@@ -257,7 +277,9 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, cacheFile = null } = {}) {
+  // Coin pages and charts fetched before are kept on disk (cache.db), so a restart does not empty them.
+  const keep = cacheFile ? createDiskCache(cacheFile) : null;
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
   const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
@@ -293,7 +315,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       throw error;
     }
   };
-  const onDemand = createOnDemand({ get: cgPage, now, perMinute: coinFetchesPerMinute, maxEntries: 500, blocked: () => now() < pageCoolUntil });
+  const onDemand = createOnDemand({ get: cgPage, now, perMinute: coinFetchesPerMinute, maxEntries: 500, blocked: () => now() < pageCoolUntil, keep });
   // Sources other than CoinGecko (the Fear & Greed history) have their own small budget.
   const onOther = createOnDemand({ get, now, perMinute: 10, maxEntries: 20 });
   // Search has a smaller budget of its own, so typing visitors cannot use up the coin pages' room.
@@ -498,6 +520,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (await trades.handle(request, response, url)) return;
     // The trend screener over the exchanges' futures markets (blockchain/market-screener.mjs).
     if (screener && await screener.handle(request, response, url)) return;
+    // The order-book density screener (blockchain/market-densities.mjs).
+    if (densities && await densities.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
     // GET /market/coins?ids=a,b,… — chosen coins' rows (a watchlist beyond the top hundred), 50 at most.
     if (request.method === "GET" && url.pathname === "/market/coins" && url.searchParams.has("ids")) {
