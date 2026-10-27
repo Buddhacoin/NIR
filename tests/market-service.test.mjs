@@ -386,3 +386,23 @@ test("the density screener finds the big resting orders in each exchange's book 
   assert.deepEqual([wall.symbol, wall.exchange, wall.side, wall.price, wall.usd, wall.id], ["ZEUS", "binance", "bid", 96, 480_000, "zeus"]);
   assert.equal(clock - wall.since, 120_000, "the wall has stood since the first reading");
 });
+
+test("the screener reads Binance and Bybit too, and lists where a coin is cheapest and dearest", async () => {
+  const { createScreener, readExchange } = await import("../blockchain/market-screener.mjs");
+  const quote = "U" + "SDT";
+  const binance = [{ symbol: `ZEUS${quote}`, lastPrice: "10", priceChangePercent: "2.5", highPrice: "11", lowPrice: "9", quoteVolume: "5000000" }];
+  const funding = [{ symbol: `ZEUS${quote}`, lastFundingRate: "0.0001" }];
+  assert.deepEqual(readExchange("binance", binance, funding)[0], { symbol: "ZEUS", price: 10, change24h: 2.5, high: 11, low: 9, volume: 5_000_000, oi: null, funding: 0.01 });
+  const bybit = { result: { list: [{ symbol: `ZEUS${quote}`, lastPrice: "10.2", price24hPcnt: "0.03", highPrice24h: "11", lowPrice24h: "9", turnover24h: "2000000", openInterestValue: "300000", fundingRate: "0.0004" }] } };
+  assert.deepEqual(readExchange("bybit", bybit)[0], { symbol: "ZEUS", price: 10.2, change24h: 3, high: 11, low: 9, volume: 2_000_000, oi: 300_000, funding: 0.04 });
+
+  const get = async (url) => (url.includes("binance.com/fapi/v1/ticker") ? binance : url.includes("premiumIndex") ? funding : url.includes("bybit") ? bybit : null);
+  const screener = createScreener({ get, now: () => 1_700_000_000_000 });
+  await screener.poll();
+  const [row] = screener.arbitrage().rows;
+  assert.deepEqual([row.symbol, row.buy.exchange, row.sell.exchange, row.markets], ["ZEUS", "binance", "bybit", 2]);
+  assert.ok(Math.abs(row.spread - 2) < 1e-9, "2% dearer on the second exchange");
+  assert.ok(Math.abs(row.fundingGap - 0.03) < 1e-9);
+  assert.equal(row.volume, 2_000_000, "the smaller of the two volumes");
+  assert.equal(screener.snapshot().rows[0].markets, undefined, "the trend rows do not carry each exchange's prices");
+});

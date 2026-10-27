@@ -204,6 +204,18 @@ profile's buttons:
 Choosing an account or a network (top right) narrows every quadrant. The
 menu below (Activity, Comments, Watchlist, My addresses, Tracked) stays.
 
+Own wallets on the profile sit in named portfolios ("Main", "Trading"…, up to
+20; `POST /market/me/wallet-portfolios`, `PATCH`/`DELETE …/wallet-portfolios/<id>`):
+the dashboard shows one portfolio at a time, a bar over it switches between
+them, makes a new one, renames or deletes the chosen one (its wallets stay
+under Tracked), and "Add +" puts a wallet into the chosen portfolio. Own
+wallets saved before portfolios existed join a first one. "Watch wallet" on
+a wallet's page saves it under Tracked and links there.
+The profile's sections stand in a row under its head: "Tracking" (the
+owner's dashboard of portfolios, shown first), Activity, Comments,
+Watchlist, My addresses and Tracked; one shows at a time, and a link such
+as `/u/<name>#tracked` opens that section.
+
 ## Portfolio
 
 `/portfolio/` follows the market sites' portfolio. A visitor makes named
@@ -527,6 +539,26 @@ Every list of wallets (transfers, counterparties, popular wallets, the
 profile) has a round bubbles button beside each wallet, and a wallet's page
 the "Bubbles: links" button.
 
+
+**Organisations** (`/entity/?name=…`, `GET /market/chain/entity?name=…`,
+`GET /market/chain/entities?names=…`): every wallet the open labels' book
+knows for an organisation (its label names it, or its name starts with it,
+as in "Binance 14" or "Binance: Hot Wallet"; exploiters and deposit
+addresses left out), up to 40, plus its wallets in the popular list. The
+page reads their balances a few at a time and adds them up: the total, the
+assets by token and each wallet. A big organisation has more wallets than the
+open book knows, so the page says the real sum may be higher. In the popular
+list an organisation with several known wallets links to its page ("39
+wallets →").
+
+The arbitrage screener (`/screener/arbitrage/`, `GET /market/arbitrage`) uses
+the trend screener's readings, which now take Binance's and Bybit's tickers
+too: for each coin on two exchanges or more (each with $100K a day or more),
+where it is cheapest and dearest, the gap in percent, the gap in funding
+between those two markets, and the smaller day volume. Filters: the smallest
+gap, the smallest volume, an exchange that must be one of the two, a coin.
+Bare addresses everywhere carry a copy button instead of a coloured dot; only
+named wallets have a picture.
 ## A coin's page
 
 Every coin has its own page at `/coin/<id>` (the CoinGecko id, e.g.

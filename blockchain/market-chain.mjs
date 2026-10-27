@@ -557,6 +557,16 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         if (ids?.contract) page.items = page.items.filter((item) => !ids.contract.has(String(item.address).toLowerCase()));
         return reply(response, 200, page, 3600), true;
       }
+      // GET /market/chain/entity?name=…: an organisation's known wallets (the open labels' book);
+      // GET /market/chain/entities?names=a,b,… (60 at most): how many each has.
+      if (path === "/market/chain/entity") {
+        const name = (url.searchParams.get("name") ?? "").trim().slice(0, 60);
+        return reply(response, 200, { name, members: names.members(name, 40) }, 600), true;
+      }
+      if (path === "/market/chain/entities") {
+        const wanted = (url.searchParams.get("names") ?? "").split(",").map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 60).slice(0, 60);
+        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 40).length])) }, 600), true;
+      }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
       if (path === "/market/chain/names") {
         const wanted = (url.searchParams.get("addresses") ?? "").split(",").filter((address) => /^0x[0-9a-fA-F]{40}$/.test(address)).slice(0, 50);

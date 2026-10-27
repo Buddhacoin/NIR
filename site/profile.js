@@ -11,7 +11,7 @@ const en = {
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navMine: "NIR mining", search: "Search coins or addresses",
   edit: "Edit", logout: "Sign out", editTitle: "Profile", fieldName: "Name", fieldUsername: "Username (once a week)",
-  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
+  fieldBio: "About", save: "Save", cancel: "Cancel", tabActivity: "Activity", tabWatch: "Watchlist", tabTracking: "Tracking", tabWallets: "My addresses", tabTracked: "Tracked", tabModeration: "Moderation", tabComments: "Comments", deleteAccount: "Delete account",
   photoChange: "Change photo", photoRemove: "Remove photo",
   barMarkets: "Markets", barMine: "Mining", pricesBy: "Prices:", chartsBy: "Charts:", notAdvice: "Not financial advice",
   aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms", dataBy: "Data:", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR",
@@ -23,7 +23,7 @@ const words = {
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
     addAddress: "Адрес кошелька (0x… или bc1…)", addLabel: "Подпись (необязательно)", add: "Добавить", badAddress: "Это не адрес кошелька.",
     walletsTotal: "Всего на моих адресах", noWallets: "Добавьте адреса своих кошельков — сайт сложит их балансы по всем сетям в один портфель. Адреса видите только вы.",
-    noTracked: "Вы пока не отслеживаете адреса. Откройте любой кошелёк (через поиск или ленту «Все переводы») и нажмите «Отследить адрес».",
+    noTracked: "Вы пока не отслеживаете адреса. Откройте любой кошелёк (через поиск или ленту «Все переводы») и нажмите «☆ Следить за кошельком» — он появится здесь.",
     remove: "Убрать", loadingWallet: "загружаю…", asset: "Актив", amount: "Количество", value: "Сумма",
     noSuggestions: "Новых подписей на проверку нет.", approve: "Одобрить", reject: "Отклонить", source: "источник", by: "от" },
   en: { loading: "Loading the profile…", missing: "There is no such profile.", unavailable: "The profile is unavailable right now.",
@@ -32,7 +32,7 @@ const words = {
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
     addAddress: "Wallet address (0x… or bc1…)", addLabel: "Label (optional)", add: "Add", badAddress: "This is not a wallet address.",
     walletsTotal: "Total on my addresses", noWallets: "Add your wallets' addresses and the site adds up their balances on every network into one portfolio. Only you see them.",
-    noTracked: "You do not track any address yet. Open a wallet (from search or All transfers) and press Track address.",
+    noTracked: "You do not track any address yet. Open a wallet (from search or All transfers) and press “☆ Watch wallet”: it shows up here.",
     remove: "Remove", loadingWallet: "loading…", asset: "Asset", amount: "Amount", value: "Value",
     noSuggestions: "No names waiting for review.", approve: "Approve", reject: "Reject", source: "source", by: "by" },
 };
@@ -40,7 +40,8 @@ const words = {
 const name = decodeURIComponent(location.pathname.split("/")[2] ?? "").toLowerCase();
 let page = null;
 let market = null;
-let view = "activity";
+// A link such as /u/<name>#tracked opens that tab (the wallet page sends visitors there after "Watch").
+let view = ["dash", "tracked", "wallets", "watch", "comments", "activity"].includes(location.hash.slice(1)) ? location.hash.slice(1) : null; // null: "Tracking" on one's own profile, else the activity
 let failure = "";
 const t = () => words[language];
 const coinsById = () => new Map((market?.coins ?? []).map((coin) => [coin.id, coin]));
@@ -56,10 +57,12 @@ function coinLink(id) {
 
 // --- Saved wallet addresses: own ones add up into one portfolio; tracked ones are bookmarks.
 let saved = null;
+let walletPortfolios = []; // the owner's named portfolios of own wallets ({ id, name }), for dashboard.js
 const holdings = new Map(); // address → the explorer's answer, or "loading"
 async function loadSaved() {
   const answer = await fetch("/market/me/addresses", { cache: "no-store" }).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   saved = answer?.addresses ?? [];
+  walletPortfolios = answer?.portfolios ?? [];
   renderView();
   renderDashboard(); // dashboard.js
 }
@@ -82,7 +85,7 @@ function addressRow(item) {
   const drop = Object.assign(document.createElement("button"), { type: "button", className: "pill", textContent: t().remove });
   drop.addEventListener("click", async () => {
     const { status, data: answer } = await send(`/market/me/addresses/${encodeURIComponent(item.address)}`, "DELETE");
-    if (status === 200) { saved = answer.addresses; renderView(); renderDashboard(); }
+    if (status === 200) { saved = answer.addresses; walletPortfolios = answer.portfolios ?? walletPortfolios; renderView(); renderDashboard(); }
   });
   row.append(link, value, drop);
   return row;
@@ -112,6 +115,7 @@ function renderWallets(box) {
     const { status, data } = await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: true, label: label.value.trim() });
     if (status !== 200) { error.textContent = data.error ?? t().badAddress; return; }
     saved = data.addresses;
+    walletPortfolios = data.portfolios ?? walletPortfolios;
     draft.address = draft.label = "";
     renderView();
     renderDashboard();
@@ -255,6 +259,10 @@ function render() {
   $("#tab-watch").hidden = !own;
   $("#tab-wallets").hidden = !own;
   $("#tab-tracked").hidden = !own;
+  $("#tab-dash").hidden = !own;
+  if (!view || (view === "dash" && !own)) view = own ? "dash" : "activity";
+  // "Tracking" is the dashboard; any other tab shows its own section in its place.
+  $("#view").hidden = view === "dash";
   $("#tab-moderation").hidden = !own || !account.moderator;
   for (const item of document.querySelectorAll(".tabbar a")) item.classList.toggle("on", own && item.id === "tab-account");
   for (const button of document.querySelectorAll("[data-view]")) button.classList.toggle("on", button.dataset.view === view);
@@ -336,7 +344,7 @@ $("#logout").addEventListener("click", async () => {
   location.href = "/";
 });
 for (const button of document.querySelectorAll("[data-view]")) {
-  button.addEventListener("click", () => { view = button.dataset.view; render(); });
+  button.addEventListener("click", () => { view = button.dataset.view; history.replaceState(null, "", `#${view}`); render(); });
 }
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");

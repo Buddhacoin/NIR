@@ -996,7 +996,7 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
   .dash-q { height: 420px; }
 }
 /* The owner's profile with the dashboard takes the page's full width. */
-.profile-page:has(.dash:not([hidden])) { max-width: none; }
+.profile-page:has(.dash:not([hidden])), .profile-page:has(#tab-dash:not([hidden])) { max-width: none; }
 .dash { margin: 0; }
 /* A coin's page spans the window as on the big market sites: the side columns take about a quarter
    each (331 px at 1440, 442 and 390 at 1920) and the chart the rest. */
@@ -1191,3 +1191,26 @@ html.touch { overscroll-behavior-y: contain; }
   .dn-table th, .dn-table td { display: table-cell !important; }
   .dn-table :is(th, td):is(:nth-child(1), :nth-child(3), :nth-child(4), :nth-child(5), :nth-child(8), :nth-child(9)) { display: none !important; }
 }
+/* The arbitrage table (arbitrage.js): each side's exchange over its price. */
+.ar-table .ar-market { line-height: 1.25; }
+.ar-table .ar-market b, .ar-table .ar-market span { display: block; }
+.ar-table .ar-market span { font-size: 12px; }
+@media (max-width: 700px) {
+  .ar-table th, .ar-table td { display: table-cell !important; }
+  .ar-table :is(th, td):is(:nth-child(1), :nth-child(3), :nth-child(4), :nth-child(6), :nth-child(8)) { display: none !important; }
+}
+/* The copy button beside a bare address (common.js copyButton). */
+.copy-link { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-left: 2px; padding: 0; border: 0; border-radius: 6px;
+  background: none; color: var(--muted); cursor: pointer; vertical-align: middle; flex: none; }
+.copy-link:hover { color: var(--text); background: var(--soft); }
+.copy-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.copy-link.done { color: var(--up); }
+.chain-dot svg { width: 100%; height: 100%; }
+/* The profile's named portfolios of own wallets (dashboard.js renderPortfolios). */
+.dash-portfolios { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 12px; }
+.dash-portfolios button { padding: 7px 14px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--muted); font-weight: 700; cursor: pointer; }
+.dash-portfolios button.on { border-color: var(--accent); background: var(--tint); color: var(--text); }
+.dash-portfolios .dash-new { border-style: dashed; color: var(--accent); }
+.dash-portfolios .dash-icon { padding: 6px 10px; }
+.w-entity { color: var(--accent); font-weight: 650; white-space: nowrap; }
+.profile-page .profile-tabs { margin: 4px 0 16px; }

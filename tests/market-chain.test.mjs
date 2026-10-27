@@ -231,7 +231,19 @@ test("signed-in visitors keep a private list of tracked and own addresses", asyn
     // Saving the same wallet in another spelling updates it; the label stays unless a new one comes.
     const again = await call(`/market/me/addresses/${EXCHANGE.toLowerCase()}`, { cookie: zeus, method: "PUT", body: { mine: true } });
     assert.equal(again.data.addresses.length, 2);
-    assert.deepEqual(again.data.addresses.find((item) => item.address === EXCHANGE.toLowerCase()), { address: EXCHANGE.toLowerCase(), label: "Olympus hot wallet", mine: true, addedAt: NOW });
+    const main = again.data.portfolios[0];
+    assert.deepEqual(again.data.portfolios.map((item) => item.name), ["Основной"], "own wallets saved before portfolios join a first one");
+    assert.deepEqual(again.data.addresses.find((item) => item.address === EXCHANGE.toLowerCase()), { address: EXCHANGE.toLowerCase(), label: "Olympus hot wallet", mine: true, portfolioId: main.id, addedAt: NOW });
+    // Named portfolios: made, renamed, a wallet moved into one; deleting one keeps its wallets as tracked.
+    assert.equal((await call("/market/me/wallet-portfolios", { cookie: zeus, method: "POST", body: { name: "" } })).status, 400);
+    const trading = await call("/market/me/wallet-portfolios", { cookie: zeus, method: "POST", body: { name: " Olympus  trading " } });
+    assert.deepEqual(trading.data.portfolios.map((item) => item.name), ["Основной", "Olympus trading"]);
+    const moved = await call(`/market/me/addresses/${UTXO}`, { cookie: zeus, method: "PUT", body: { portfolioId: trading.data.id } });
+    assert.equal(moved.data.addresses.find((item) => item.address === UTXO).portfolioId, trading.data.id);
+    assert.equal((await call(`/market/me/wallet-portfolios/${trading.data.id}`, { cookie: zeus, method: "PATCH", body: { name: "Hera" } })).data.portfolios[1].name, "Hera");
+    const dropped = await call(`/market/me/wallet-portfolios/${trading.data.id}`, { cookie: zeus, method: "DELETE" });
+    assert.deepEqual(dropped.data.addresses.find((item) => item.address === UTXO), { address: UTXO, label: "", mine: false, portfolioId: null, addedAt: NOW });
+    assert.equal((await call(`/market/me/wallet-portfolios/${trading.data.id}`, { cookie: undefined, method: "DELETE" })).status, 401);
     const athena = await signIn("athena");
     assert.deepEqual((await call("/market/me/addresses", { cookie: athena })).data.addresses, []);
     assert.equal((await call(`/market/me/addresses/${UTXO}`, { cookie: zeus, method: "DELETE" })).data.addresses.length, 1);
@@ -542,4 +554,16 @@ test("the service keeps every transfer it reads in its own store and answers a w
   const again = await chain.links(EXCHANGE);
   assert.ok(again.rows.length >= links.rows.length);
   assert.ok(asked.length - before <= 4, "a fresh wallet is answered from the store, not the explorers");
+});
+
+test("an organisation's known wallets are found by its label or the start of their names", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const names = createNames({ get: async () => null });
+  const wallet = (digit) => `0x${digit.repeat(40)}`;
+  names.remember([{ address: wallet("1"), name: "Olympus 14", entity: null }, { address: wallet("2"), name: "Olympus: Hot Wallet", entity: null },
+    { address: wallet("3"), name: "Cold storage", entity: "Olympus" }, { address: wallet("4"), name: "Olympus Exploiter", entity: null },
+    { address: wallet("5"), name: "Olympusdao", entity: null }, { address: wallet("6"), name: "Olympus Deposit", entity: null }], "test");
+  assert.deepEqual(names.members("Olympus").map((item) => item.address).sort(), [wallet("1"), wallet("2"), wallet("3")],
+    "not an exploiter, a deposit address or another name that merely starts the same");
+  assert.deepEqual(names.members("O"), [], "too short a name finds nothing");
 });

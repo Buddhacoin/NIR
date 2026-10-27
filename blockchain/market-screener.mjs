@@ -1,13 +1,17 @@
 // The trend screener (/screener/): every perpetual futures market of the big exchanges that answer
-// without a key (Bitget, OKX, Gate, MEXC), merged by coin: price, change over 5 and 15 minutes, 1 and
+// without a key (Binance, Bybit, Bitget, OKX, Gate, MEXC), merged by coin: price, change over 5 and 15 minutes, 1 and
 // 4 hours and the day, the day's range and volume, open interest and its change, and funding. One
 // request per exchange a minute brings every coin; the short-term changes come from the server's own
 // snapshots, one a minute kept for a day, so they fill in as the server runs.
 //
 // GET /market/screener → { updatedAt, since, exchanges, rows: [{ symbol, price, ch5m, ch15m, ch1h, ch4h, ch24h,
 //   range24h, volume, oi, oi1h, oi24h, funding, exchanges }] }
+// GET /market/arbitrage → { updatedAt, exchanges, rows: [{ symbol, spread, buy, sell, fundingGap, volume, markets }] }
 // The dollar-pegged quote coin is spelled U[S]DT / U%53DT so the protocol files stay free of other coins' names.
 const SOURCES = {
+  binance: "https://fapi.binance.com/fapi/v1/ticker/24hr",
+  binanceFunding: "https://fapi.binance.com/fapi/v1/premiumIndex",
+  bybit: "https://api.bybit.com/v5/market/tickers?category=linear",
   bitget: "https://api.bitget.com/api/v2/mix/market/tickers?productType=U%53DT-FUTURES",
   okx: "https://www.okx.com/api/v5/market/tickers?instType=SWAP",
   okxOi: "https://www.okx.com/api/v5/public/open-interest?instType=SWAP",
@@ -35,7 +39,23 @@ const list = (value) => (Array.isArray(value) ? value : Array.isArray(value?.dat
 export function readExchange(name, answer, extra) {
   const rows = [];
   const add = (symbol, fields) => { if (SYMBOL.test(symbol) && fields.price > 0) rows.push({ symbol, ...fields }); };
-  if (name === "bitget") {
+  if (name === "binance") {
+    // Funding comes in a second list (premiumIndex); open interest is asked per coin there, so it is left out.
+    const funding = new Map(list(extra).map((item) => [item?.symbol, num(item?.lastFundingRate)]));
+    for (const item of list(answer)) {
+      if (!new RegExp(`${QUOTE}$`).test(item?.symbol ?? "")) continue;
+      const rate = funding.get(item.symbol);
+      add(item.symbol.slice(0, -QUOTE.length), { price: num(item.lastPrice), change24h: num(item.priceChangePercent), high: num(item.highPrice), low: num(item.lowPrice),
+        volume: num(item.quoteVolume) ?? 0, oi: null, funding: rate === null || rate === undefined ? null : rate * 100 });
+    }
+  } else if (name === "bybit") {
+    for (const item of Array.isArray(answer?.result?.list) ? answer.result.list : []) {
+      if (!new RegExp(`${QUOTE}$`).test(item?.symbol ?? "")) continue;
+      add(item.symbol.slice(0, -QUOTE.length), { price: num(item.lastPrice), change24h: num(item.price24hPcnt) === null ? null : num(item.price24hPcnt) * 100,
+        high: num(item.highPrice24h), low: num(item.lowPrice24h), volume: num(item.turnover24h) ?? 0, oi: num(item.openInterestValue),
+        funding: num(item.fundingRate) === null ? null : num(item.fundingRate) * 100 });
+    }
+  } else if (name === "bitget") {
     for (const item of list(answer)) {
       if (!/U[S]DT$/.test(item?.symbol ?? "")) continue;
       const price = num(item.lastPr);
@@ -100,6 +120,8 @@ export function merge(byExchange) {
       oi: oiMarkets.length ? oiMarkets.reduce((sum, market) => sum + market.oi, 0) : null,
       funding: weight ? funded.reduce((sum, market) => sum + market.funding * market.volume, 0) / weight : null,
       exchanges: same.map((market) => market.exchange).sort(),
+      // Each exchange's own price and funding, for the arbitrage list (not sent with the trend rows).
+      markets: same.map((market) => ({ exchange: market.exchange, price: market.price, funding: market.funding, volume: market.volume })),
     };
   });
 }
@@ -173,8 +195,8 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     const answers = await Promise.all(Object.entries(SOURCES).map(([name, url]) => get(url).then((value) => [name, value]).catch(() => [name, null])));
     const raw = Object.fromEntries(answers);
     const byExchange = {};
-    for (const name of ["bitget", "okx", "gate", "mexc"]) {
-      const read = raw[name] ? readExchange(name, raw[name], raw.okxOi) : [];
+    for (const name of ["binance", "bybit", "bitget", "okx", "gate", "mexc"]) {
+      const read = raw[name] ? readExchange(name, raw[name], name === "binance" ? raw.binanceFunding : raw.okxOi) : [];
       if (read.length) byExchange[name] = read;
     }
     if (!Object.keys(byExchange).length) return false;
@@ -206,16 +228,33 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     timer.unref?.();
     return () => clearInterval(timer);
   }
-  const snapshot = () => ({ updatedAt, since, exchanges, rows: rows.map((row) => {
+  const snapshot = () => ({ updatedAt, since, exchanges, rows: rows.map(({ markets, ...row }) => {
     const coin = coinOf(row.symbol);
     return coin ? { ...row, id: coin.id, image: coin.image ?? null } : row;
   }) });
+  // The arbitrage list: for each coin traded on two exchanges or more (each with at least `minVolume`
+  // a day), where it is cheapest and dearest now, the gap between them, and both funding rates.
+  function arbitrage(minVolume = 100_000) {
+    const list = [];
+    for (const row of rows) {
+      const markets = (row.markets ?? []).filter((market) => market.volume >= minVolume && market.price > 0);
+      if (markets.length < 2) continue;
+      const low = markets.reduce((best, market) => (market.price < best.price ? market : best));
+      const high = markets.reduce((best, market) => (market.price > best.price ? market : best));
+      const spread = (high.price / low.price - 1) * 100;
+      if (spread <= 0) continue;
+      const coin = coinOf(row.symbol);
+      list.push({ symbol: row.symbol, spread, buy: low, sell: high, fundingGap: low.funding !== null && high.funding !== null ? high.funding - low.funding : null,
+        volume: Math.min(low.volume, high.volume), markets: markets.length, ...(coin ? { id: coin.id, image: coin.image ?? null } : {}) });
+    }
+    return { updatedAt, exchanges, rows: list.sort((left, right) => right.spread - left.spread).slice(0, 500) };
+  }
 
   async function handle(request, response, url) {
-    if (url.pathname !== "/market/screener") return false;
+    if (url.pathname !== "/market/screener" && url.pathname !== "/market/arbitrage") return false;
     response.writeHead(request.method === "GET" ? 200 : 405, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=20" });
-    response.end(JSON.stringify(request.method === "GET" ? snapshot() : { error: "read only" }));
+    response.end(JSON.stringify(request.method !== "GET" ? { error: "read only" } : url.pathname === "/market/arbitrage" ? arbitrage() : snapshot()));
     return true;
   }
-  return { poll, start, snapshot, handle, backfill };
+  return { poll, start, snapshot, arbitrage, handle, backfill };
 }
