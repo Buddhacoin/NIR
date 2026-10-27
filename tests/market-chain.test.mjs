@@ -567,3 +567,38 @@ test("an organisation's known wallets are found by its label or the start of the
     "not an exploiter, a deposit address or another name that merely starts the same");
   assert.deepEqual(names.members("O"), [], "too short a name finds nothing");
 });
+
+test("Satoshi's early blocks are read key by key, and the ones not read yet count as their untouched reward", async () => {
+  const { createPatoshi, readList, scriptHash } = await import("../blockchain/market-patoshi.mjs");
+  const key = (digit) => `04${digit.repeat(128)}`;
+  const csv = ["Block Height,Output Index,Address/Pubkey,Amount (BTC),Script Type",
+    ...Array.from({ length: 1_200 }, (_, index) => `${index + 3},0,${key(String(index % 10))}${index >= 10 ? "" : ""},50.0,p2pk`)].join("\n");
+  assert.equal(readList("Block Height,x\n3,0,not-a-key,50,p2pk").length, 0);
+  // The explorer's key is the SHA-256 of the pay-to-public-key script, not reversed.
+  assert.equal(scriptHash(key("1")).length, 64);
+  const spent = scriptHash(key("1"));
+  const get = async (url) => ({ chain_stats: url.endsWith(spent) ? { funded_txo_sum: 5_000_000_000, spent_txo_sum: 5_000_000_000 } : { funded_txo_sum: 5_000_000_000, spent_txo_sum: 0 } });
+  const patoshi = createPatoshi({ get, getText: async () => csv, now: () => 1_700_000_000_000 });
+  assert.equal(await patoshi.load(), true);
+  const before = patoshi.summary();
+  assert.equal(before.keys, 10, "the same key in many rows is one key");
+  assert.equal(before.estimate, 500, "keys not read yet count as 50 each");
+  await patoshi.check(key("1"));
+  await patoshi.check(key("2"));
+  const after = patoshi.summary();
+  assert.deepEqual([after.checked, after.coins, after.moved, after.estimate], [2, 50, 1, 450]);
+});
+
+test("open books of labelled wallets fill names the book lacks, never replace one, and leave out scam labels", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const names = createNames({ get: async () => null });
+  const wallet = (digit) => `0x${digit.repeat(40)}`;
+  names.remember([{ address: wallet("1"), name: "Olympus: Hot Wallet" }], "labels");
+  const added = names.importBook({ [wallet("1")]: { name: "Something else", labels: [] }, [wallet("2")]: { name: "Olympus 7", labels: ["exchange"] },
+    [wallet("3")]: { name: "Fake_Phishing123", labels: ["phish-hack"] }, [wallet("4")]: { name: "", labels: ["airdrop-hunter"] } }, "open-book");
+  assert.equal(added, 1);
+  assert.equal(names.name(wallet("1")).name, "Olympus: Hot Wallet", "a name already known stays");
+  assert.equal(names.name(wallet("2")).name, "Olympus 7");
+  assert.equal(names.name(wallet("3")), null);
+  assert.deepEqual(names.members("Olympus").map((item) => item.address).sort(), [wallet("1"), wallet("2")]);
+});

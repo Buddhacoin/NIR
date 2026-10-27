@@ -7,6 +7,8 @@
 // GET /market/screener → { updatedAt, since, exchanges, rows: [{ symbol, price, ch5m, ch15m, ch1h, ch4h, ch24h,
 //   range24h, volume, oi, oi1h, oi24h, funding, exchanges }] }
 // GET /market/arbitrage → { updatedAt, exchanges, rows: [{ symbol, spread, buy, sell, fundingGap, volume, markets }] }
+// GET /market/listings → { updatedAt, since, rows: [{ symbol, exchange, at, price, now, change }] }: a coin's futures market
+//   that appeared on an exchange after the screener began watching it (the last 30 days).
 // The dollar-pegged quote coin is spelled U[S]DT / U%53DT so the protocol files stay free of other coins' names.
 const SOURCES = {
   binance: "https://fapi.binance.com/fapi/v1/ticker/24hr",
@@ -134,6 +136,11 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
   let updatedAt = null;
   let since = null;
   let exchanges = [];
+  // New markets: every exchange's coins seen so far, and the ones that appeared since.
+  const listed = new Set(); // "exchange:symbol"
+  const watched = new Set(); // exchanges whose whole list has been seen once
+  let listings = []; // [{ symbol, exchange, at, price }]
+  let listingsSince = null;
 
   // The value `minutes` ago from the snapshots, or null while the server has not run that long.
   function back(series, minutes, at) {
@@ -154,6 +161,10 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
           if (SYMBOL.test(symbol) && Array.isArray(series)) history.set(symbol, series.filter((point) => Array.isArray(point) && point.length === 3 && point[0] > now() - 86_400_000));
         }
         since = saved.since ?? null;
+        for (const key of saved.listed ?? []) if (typeof key === "string") listed.add(key);
+        for (const name of saved.watched ?? []) watched.add(name);
+        listings = (saved.listings ?? []).filter((item) => now() - item.at < 30 * 86_400_000);
+        listingsSince = saved.listingsSince ?? null;
       }
     } catch {}
   }
@@ -164,7 +175,7 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     // One point in five is enough to come back from a restart.
     const compact = {};
     for (const [symbol, series] of history) compact[symbol] = series.filter((point, index) => index % 5 === 0 || index === series.length - 1);
-    try { write(file, JSON.stringify({ savedAt: at, since, history: compact })); } catch {}
+    try { write(file, JSON.stringify({ savedAt: at, since, history: compact, listed: [...listed], watched: [...watched], listings, listingsSince })); } catch {}
   }
   // The coins without four hours of snapshots take the exchanges' candles once.
   let filled = false;
@@ -201,6 +212,17 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     }
     if (!Object.keys(byExchange).length) return false;
     const at = now();
+    // A coin new to an exchange whose list was seen before is a listing; the first list only counts as known.
+    for (const [name, list] of Object.entries(byExchange)) {
+      for (const row of list) {
+        const key = `${name}:${row.symbol}`;
+        if (listed.has(key)) continue;
+        listed.add(key);
+        if (watched.has(name)) listings.push({ symbol: row.symbol, exchange: name, at, price: row.price });
+      }
+      if (!watched.has(name)) { watched.add(name); listingsSince ??= at; }
+    }
+    listings = listings.filter((item) => at - item.at < 30 * 86_400_000).slice(-500);
     const merged = merge(byExchange);
     for (const coin of merged) {
       const series = history.get(coin.symbol) ?? [];
@@ -251,10 +273,20 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
   }
 
   async function handle(request, response, url) {
-    if (url.pathname !== "/market/screener" && url.pathname !== "/market/arbitrage") return false;
+    if (!["/market/screener", "/market/arbitrage", "/market/listings"].includes(url.pathname)) return false;
     response.writeHead(request.method === "GET" ? 200 : 405, { "content-type": "application/json; charset=utf-8", "cache-control": "public, max-age=20" });
-    response.end(JSON.stringify(request.method !== "GET" ? { error: "read only" } : url.pathname === "/market/arbitrage" ? arbitrage() : snapshot()));
+    response.end(JSON.stringify(request.method !== "GET" ? { error: "read only" } : url.pathname === "/market/arbitrage" ? arbitrage()
+      : url.pathname === "/market/listings" ? newListings() : snapshot()));
     return true;
   }
-  return { poll, start, snapshot, arbitrage, handle, backfill };
+  // The new markets, newest first, with the coin's price now against its price when it appeared.
+  function newListings() {
+    const prices = new Map(rows.map((row) => [row.symbol, row.price]));
+    return { updatedAt, since: listingsSince, rows: [...listings].reverse().map((item) => {
+      const price = prices.get(item.symbol) ?? null;
+      const coin = coinOf(item.symbol);
+      return { ...item, now: price, change: price && item.price ? (price / item.price - 1) * 100 : null, ...(coin ? { id: coin.id, image: coin.image ?? null } : {}) };
+    }) };
+  }
+  return { poll, start, snapshot, arbitrage, newListings, handle, backfill };
 }

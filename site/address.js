@@ -21,6 +21,7 @@ const words = {
   ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Следить за кошельком", tracked: "★ Слежу",
     trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
     mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
+    satoshi: "Это лишь один из ~22 000 адресов Сатоши Накамото: здесь видна только его доля.", satoshiOpen: "Все монеты Сатоши →",
     mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
     trackDone: "Готово: кошелёк добавлен в ваш профиль, вкладка «Отслеживаемые» — там его баланс и новые переводы.", openTracked: "Открыть →",
     mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
@@ -48,6 +49,7 @@ const words = {
   en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Watch wallet", tracked: "★ Watching",
     trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
     mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
+    satoshi: "This is only one of Satoshi Nakamoto's ~22,000 addresses: it shows only its own share.", satoshiOpen: "All of Satoshi's coins →",
     mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
     trackDone: "Done: the wallet is in your profile under Tracked, with its balance and new transfers.", openTracked: "Open →",
     mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
@@ -108,6 +110,12 @@ const COLORS = ["#3861fb", "#16c784", "#f3a12f", "#8b7bff", "#ea3943", "#2ee6a6"
 function renderHead() {
   // A well-known wallet keeps the name it has in the popular list, also where the explorer gives none.
   if (!data.name && knownName(address)) data.name = knownName(address);
+  // One of Satoshi Nakamoto's addresses: all his coins are on his page.
+  if (data.name === "Satoshi Nakamoto" && !$("#satoshi-note")) {
+    const note = Object.assign(node("p", "note-bar ok"), { id: "satoshi-note" });
+    note.append(t().satoshi, " ", Object.assign(node("a", "", t().satoshiOpen), { href: entityUrl("Satoshi Nakamoto") }));
+    $("#partial").before(note);
+  }
   const name = data.name ?? (data.contract ? t().contract : t().wallet);
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;

@@ -13,8 +13,12 @@ const en = {
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { count: (done, all) => (done < all ? `${all} адресов · загружено ${done}` : `${all} адресов`), loading: "загружаю…", none: "Адресов этой организации не найдено.", failed: "—" },
-  en: { count: (done, all) => (done < all ? `${all} wallets · ${done} loaded` : `${all} wallets`), loading: "loading…", none: "No wallets of this organisation were found.", failed: "—" },
+  ru: { satoshiCount: (keys, checked) => (checked < keys ? `${keys.toLocaleString("ru")} адресов · проверено ${checked.toLocaleString("ru")}` : `${keys.toLocaleString("ru")} адресов`),
+    satoshiNote: (keys, checked, moved) => `Монеты из ${keys.toLocaleString("ru")} ранних блоков, которые по исследованию Сергио Лернера («Patoshi») добыл Сатоши Накамото; каждый блок принёс 50 BTC. Сервер проверяет каждый адрес в сети: проверено ${checked.toLocaleString("ru")}, потрачено с ${moved.toLocaleString("ru")}. Ещё не проверенные считаются по 50 BTC — почти все они никогда не двигались. Принадлежность Сатоши — вывод исследования, а не доказанный факт.`,
+    count: (done, all) => (done < all ? `${all} адресов · загружено ${done}` : `${all} адресов`), loading: "загружаю…", none: "Адресов этой организации не найдено.", failed: "—" },
+  en: { satoshiCount: (keys, checked) => (checked < keys ? `${keys.toLocaleString("en")} wallets · ${checked.toLocaleString("en")} checked` : `${keys.toLocaleString("en")} wallets`),
+    satoshiNote: (keys, checked, moved) => `Coins from ${keys.toLocaleString("en")} early blocks that, by Sergio Lerner's research (“Patoshi”), Satoshi Nakamoto mined; each block paid 50 BTC. The server checks every address on the network: ${checked.toLocaleString("en")} checked, ${moved.toLocaleString("en")} spent from. The ones not checked yet count as 50 BTC: almost none have ever moved. That they are Satoshi's is the research's conclusion, not a proven fact.`,
+    count: (done, all) => (done < all ? `${all} wallets · ${done} loaded` : `${all} wallets`), loading: "loading…", none: "No wallets of this organisation were found.", failed: "—" },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
@@ -23,9 +27,24 @@ let members = null; // [{ address, name, logo }]
 const balances = new Map(); // address → holdings answer, or "failed"
 
 const amountText = (value) => (value >= 1e6 ? big(value, "") : value.toLocaleString(locale(), { maximumFractionDigits: value >= 1 ? 2 : 6 }));
+let satoshi = null; // Satoshi Nakamoto's early coins (/market/chain/satoshi), on his page only
+function renderSatoshi() {
+  const { keys, checked, moved, estimate, price: rate } = satoshi;
+  $("#total").textContent = rate ? price(estimate * rate) : `${estimate.toLocaleString(locale(), { maximumFractionDigits: 0 })} BTC`;
+  $("#count").textContent = t().satoshiCount(keys, checked);
+  $("#note").textContent = t().satoshiNote(keys, checked, moved);
+  const tr = node("tr");
+  const name = node("td", "left");
+  const cell = node("span", "coin-cell");
+  cell.append(logo({ id: "bitcoin", symbol: "BTC", image: null }), node("b", "", "BTC"));
+  name.append(cell);
+  tr.append(name, node("td", "", `${estimate.toLocaleString(locale(), { maximumFractionDigits: 0 })} BTC`), node("td", "", rate ? price(estimate * rate) : "—"));
+  $("#assets").replaceChildren(tr);
+}
 function render() {
   document.title = `${entity || "—"} — NIR Markets`;
   $("#name").textContent = entity || "—";
+  if (satoshi) { renderSatoshi(); }
   if (!members) return;
   const first = members.find((item) => item.logo) ?? members[0];
   if (first) {
@@ -35,8 +54,10 @@ function render() {
   }
   const loaded = members.filter((item) => balances.has(item.address));
   const total = loaded.reduce((sum, item) => sum + (balances.get(item.address)?.assets?.reduce((all, asset) => all + (asset.usd ?? 0), 0) ?? 0), 0);
-  $("#total").textContent = price(total);
-  $("#count").textContent = t().count(loaded.length, members.length);
+  if (!satoshi) {
+    $("#total").textContent = price(total);
+    $("#count").textContent = t().count(loaded.length, members.length);
+  }
   // Every asset of every wallet, added up by token.
   const tokens = new Map();
   for (const item of loaded) {
@@ -49,7 +70,7 @@ function render() {
     }
   }
   const assets = [...tokens.values()].sort((left, right) => right.usd - left.usd).slice(0, 100);
-  $("#assets").replaceChildren(...assets.map((row) => {
+  if (!satoshi) $("#assets").replaceChildren(...assets.map((row) => {
     const tr = node("tr");
     const name = node("td", "left");
     const cell = node("span", "coin-cell");
@@ -75,6 +96,11 @@ function sum(item) {
 
 async function load() {
   if (!entity) { members = []; render(); return; }
+  // Satoshi Nakamoto: his early blocks' coins, counted by the server.
+  if (/^satoshi nakamoto$/i.test(entity)) {
+    satoshi = await fetch("/market/chain/satoshi").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    if (satoshi && !satoshi.keys) satoshi = null;
+  }
   const answer = await fetch(`/market/chain/entity?name=${encodeURIComponent(entity)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   // The popular list's well-known wallets of the organisation join the open book's.
   const known = WHALES.filter((item) => entityName(item.name) === entity).map((item) => ({ address: item.address, name: item.name, logo: null }));

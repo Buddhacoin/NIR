@@ -26,6 +26,7 @@ const words = {
 const t = () => words[language === "en" ? "en" : "ru"];
 // How many known wallets each organisation has (/market/chain/entities), asked for the rows shown.
 const entityCounts = new Map();
+let satoshi = null; // /market/chain/satoshi, for Satoshi Nakamoto's row
 const askCounts = new Set();
 async function loadCounts() {
   const wanted = [...askCounts].filter((name) => name.length >= 2 && !entityCounts.has(name)).slice(0, 60);
@@ -35,6 +36,11 @@ async function loadCounts() {
   const answer = await fetch(`/market/chain/entities?names=${wanted.map(encodeURIComponent).join(",")}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   // The popular list's own wallets of an organisation count too.
   for (const name of wanted) entityCounts.set(name, Math.max(answer?.counts?.[name] ?? 0, WHALES.filter((item) => entityName(item.name) === name).length));
+  // Satoshi Nakamoto's early blocks count as his wallets.
+  if (wanted.includes("Satoshi Nakamoto")) {
+    satoshi = await fetch("/market/chain/satoshi").then((response) => (response.ok ? response.json() : null)).catch(() => null);
+    if (satoshi?.keys) entityCounts.set("Satoshi Nakamoto", satoshi.keys);
+  }
   if (wanted.some((name) => entityCounts.get(name) > 1)) render();
 }
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
@@ -84,7 +90,8 @@ function render() {
     row.dataset.address = item.address;
     row.addEventListener("click", (event) => { if (!event.target.closest("a, button")) location.href = addressUrl(item.address); });
     const who = node("td", "left");
-    const balance = balances.get(item.address);
+    // Satoshi Nakamoto's row counts all his early blocks' coins, not only the one address.
+    const balance = item.name === "Satoshi Nakamoto" && satoshi?.price ? { total: satoshi.estimate * satoshi.price, chains: ["btc"] } : balances.get(item.address);
     const link = Object.assign(node("a", "ex-whale"), { href: addressUrl(item.address) });
     // On a phone the balance stands under the name, so nothing hides past the screen's edge.
     const mobile = node("small", "w-mobile-balance", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total));

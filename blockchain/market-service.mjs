@@ -277,7 +277,7 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, cacheFile = null } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, liquidations = null, cacheFile = null } = {}) {
   // Coin pages and charts fetched before are kept on disk (cache.db), so a restart does not empty them.
   const keep = cacheFile ? createDiskCache(cacheFile) : null;
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
@@ -522,6 +522,8 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (screener && await screener.handle(request, response, url)) return;
     // The order-book density screener (blockchain/market-densities.mjs).
     if (densities && await densities.handle(request, response, url)) return;
+    // Liquidations on the big exchanges' futures (blockchain/market-liquidations.mjs).
+    if (liquidations && await liquidations.handle(request, response, url)) return;
     const [, kind, id] = /^\/market\/(coin|chart)\/([^/]+)$/.exec(url.pathname) ?? [];
     // GET /market/coins?ids=a,b,… — chosen coins' rows (a watchlist beyond the top hundred), 50 at most.
     if (request.method === "GET" && url.pathname === "/market/coins" && url.searchParams.has("ids")) {

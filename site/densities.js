@@ -8,7 +8,7 @@ const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
-  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", title: "Order book walls", colCoin: "Coin", colExchange: "Exchange", colSide: "Order",
+  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", title: "Order book walls", colCoin: "Coin", colExchange: "Exchange", colSide: "Order",
   colPrice: "Price", colSize: "Size", colDistance: "To price", colRatio: "× average", colAge: "Standing",
   source: "Data: the open futures order books of Binance, Bybit, OKX and Bitget; the server reads the books of the 100 most traded coins in turn, each about once a minute. A wall is a book level within 5% of the price, several times the average level around it and at least $100K. “Standing” is how long the order has held that price.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
