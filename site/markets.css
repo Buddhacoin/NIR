@@ -1373,3 +1373,71 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .ex-total small { font-size: 13px; font-weight: 600; }
 .ex-chip.tag[hidden] { display: none; }
 .ex-table .coin-cell .chain-dot { width: 14px; height: 14px; }
+/* The order book screener (book.js): the controls, the chart with levels, the bids and asks with bars, the
+   trades feed; the constructor puts several exchanges' books side by side; settings slide in from the right. */
+.bk-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; margin: 6px 0 14px; }
+.bk-field { display: grid; gap: 6px; min-width: 0; }
+.bk-field small { color: var(--muted); font-size: 12px; font-weight: 700; }
+.bk-field select, .bk-field input { min-width: 150px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--text); font: inherit; font-weight: 650; }
+.bk-field input { width: 120px; min-width: 0; text-transform: uppercase; }
+.bk-multi, .bk-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.bk-multi .pill.on, .bk-tools .pill.on { border-color: var(--accent); color: var(--accent); }
+.bk-config { flex: 1 1 260px; font-size: 12px; text-align: right; }
+.bk-chart-box { margin-bottom: 12px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.bk-chart-box[hidden] { display: none; }
+.bk-chart-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.bk-chart { height: 420px; }
+.bk-books { display: grid; align-items: start; gap: 14px; }
+.bk-books.single { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.bk-books.multi { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.bk-book { min-width: 0; }
+.bk-book-title { margin: 0 0 8px; font-size: 16px; font-weight: 650; text-align: center; }
+.bk-book-title b { color: var(--gold); font-weight: 700; }
+.bk-sides { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 10px; }
+.bk-side, .bk-trades { width: 100%; font-variant-numeric: tabular-nums; }
+.bk-side td, .bk-trades td { padding: 7px 10px; }
+.bk-side tbody tr:not(.bk-total) { background: linear-gradient(to left, var(--bar) var(--fill), transparent var(--fill)); }
+.bk-side.bid { --bar: color-mix(in srgb, var(--up) 22%, transparent); }
+.bk-side.ask { --bar: color-mix(in srgb, var(--down) 22%, transparent); }
+.bk-side tr.big td, .bk-trades tr.big td { font-weight: 800; }
+.bk-side tr.big { box-shadow: inset 3px 0 0 var(--bar-edge, transparent); }
+.bk-side.bid tr.big { --bar-edge: var(--up); }
+.bk-side.ask tr.big { --bar-edge: var(--down); }
+.bk-total td { background: var(--soft); font-weight: 700; font-size: 13px; }
+.bk-trades tr.big { background: var(--soft); }
+.bk-drawer-back { position: fixed; inset: 0; z-index: 90; display: flex; justify-content: flex-end; background: #0007; }
+.bk-drawer-back[hidden] { display: none; }
+.bk-drawer { width: min(520px, 100%); height: 100%; overflow-y: auto; background: var(--card); box-shadow: -10px 0 40px #0006; }
+.bk-drawer-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--accent); color: #fff; font-size: 18px; }
+.bk-drawer-head .pill { border-color: #fff6; background: none; color: #fff; }
+#drawer-body { display: grid; gap: 14px; padding: 18px 20px 28px; }
+.bk-head { margin: 8px 0 0; font-size: 16px; text-align: center; }
+.bk-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.bk-input { display: grid; gap: 6px; }
+.bk-input small { font-size: 12px; font-weight: 650; }
+.bk-input-box { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); }
+.bk-input-box input { width: 100%; min-width: 0; padding: 10px; border: 0; outline: 0; background: none; color: var(--text); font: inherit; }
+.bk-input-box i { padding: 0 10px; color: var(--muted); font-style: normal; font-size: 13px; }
+.bk-toggle { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.bk-toggle input { width: 20px; height: 20px; margin-top: 2px; accent-color: var(--accent); }
+.bk-toggle span { display: grid; gap: 3px; }
+.bk-drawer-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+@media (max-width: 900px) { .bk-books.single { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) {
+  .bk-controls { gap: 10px; }
+  .bk-field select { min-width: 140px; }
+  .bk-config { text-align: left; }
+  .bk-chart { height: 300px; }
+  .bk-side td, .bk-trades td { padding: 6px 5px; font-size: 13px; }
+  .bk-side th, .bk-trades th { padding: 8px 5px; font-size: 12px; }
+  .bk-sides { gap: 6px; }
+  .bk-grid { grid-template-columns: 1fr 1fr; }
+  .bk .ex-table th, .bk .ex-table td { display: table-cell !important; }
+}
+/* Order book: tables keep to their columns; the trades feed scrolls; in the constructor it spans the row below. */
+.bk .ex-table { min-width: 0; table-layout: fixed; }
+.bk-side td, .bk-side th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bk-feed { max-height: 640px; overflow-y: auto; border-radius: 10px; }
+.bk-books.multi .bk-feed { grid-column: 1 / -1; max-height: 420px; }
+.bk-books.multi .bk-side td, .bk-books.multi .bk-side th { padding: 6px 6px; font-size: 13px; }
+.bk-trades th:first-child, .bk-trades td:first-child { width: 78px; }

@@ -13,6 +13,7 @@ import { createScreener } from "./market-screener.mjs";
 import { createLedger } from "./market-ledger.mjs";
 import { createBehaviour } from "./market-behaviour.mjs";
 import { createDensities } from "./market-densities.mjs";
+import { createBook } from "./market-book.mjs";
 import { createPatoshi } from "./market-patoshi.mjs";
 import { createLiquidations } from "./market-liquidations.mjs";
 import { createLogos } from "./market-logos.mjs";
@@ -63,6 +64,8 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
 const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol), file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
   read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
 // The density screener reads the exchanges' futures order books, the screener's busiest coins first.
+// The order book screener reads a pair's book, trades and candles when a visitor asks (shared, two seconds).
+const book = fixture ? null : createBook({ get: fetchExplorer });
 const densities = fixture ? null : createDensities({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol),
   coins: () => screener?.snapshot().rows ?? [] });
 // Liquidations on Binance, Bybit and OKX, kept a day (liquidations.json beside the accounts).
@@ -78,7 +81,7 @@ const service = createMarketService(fixture ? {
       throw error?.code === "ENOENT" ? Object.assign(new Error("not found"), { status: 404 }) : error;
     }
   },
-} : { accounts, chain, screener, densities, liquidations, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
+} : { accounts, chain, screener, densities, liquidations, book, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));
 service.start();
 chain.warm();

@@ -442,3 +442,40 @@ test("a futures market that appears after the screener began watching an exchang
   const [listing] = screener.newListings().rows;
   assert.deepEqual([listing.symbol, listing.exchange, listing.price, listing.at], ["HERA", "bitget", 2, clock]);
 });
+
+test("the order book screener gathers a book into price steps and reads each exchange's answers its own way", async () => {
+  const { createBook, gatherBook, niceStep } = await import("../blockchain/market-book.mjs");
+  assert.equal(niceStep(1.17), 2);
+  assert.equal(niceStep(0.0031), 0.005);
+  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [10, 5]], asks: [[100.1, 3], [100.9, 4]] }, 0.5, 100);
+  assert.equal(gathered.step, 1);
+  assert.deepEqual(gathered.bids, [[99, 3]], "bids round down into their step; one far from the price is left out");
+  assert.deepEqual(gathered.asks, [[101, 7]], "asks round up");
+  const asked = [];
+  const get = async (url) => {
+    asked.push(url);
+    if (url.includes("instruments")) return { data: [{ instId: "ETH-U" + "SDT-SWAP", ctVal: "0.1" }] };
+    if (url.includes("/books?")) return { data: [{ bids: [["2000", "10", "0", "1"]], asks: [["2001", "20", "0", "1"]] }] };
+    if (url.includes("/market/trades")) return { data: [{ px: "2000.5", sz: "3", side: "sell", ts: "1000" }] };
+    if (url.includes("bitfinex")) return [[2000, 1, 2], [2002, 1, -3]];
+    return null;
+  };
+  const book = createBook({ get, now: () => 5_000 });
+  const call = async (path) => {
+    const response = { status: 0, body: "", writeHead(code) { this.status = code; }, end(text) { this.body = text; } };
+    await book.handle({ method: "GET" }, response, new URL(`http://x${path}`));
+    return { status: response.status, data: JSON.parse(response.body) };
+  };
+  const swap = await call("/market/book?ex=okx-f&base=ETH&quote=U" + "SDT");
+  assert.deepEqual([swap.data.bids[0][1], swap.data.asks[0][1]], [1, 2], "contracts count as their coins");
+  assert.deepEqual((await call("/market/book/trades?ex=okx-f&base=ETH&quote=U" + "SDT")).data.trades, [{ time: 1000, price: 2000.5, amount: 0.30000000000000004, side: "sell" }]);
+  const dollars = await call("/market/book?ex=bitfinex&base=ETH&quote=U" + "SDT");
+  assert.equal(dollars.data.quote, "USD", "an exchange that trades dollars answers for the stablecoin");
+  assert.deepEqual([dollars.data.bids.length, dollars.data.asks.length], [1, 1]);
+  const before = asked.length;
+  await call("/market/book?ex=bitfinex&base=ETH&quote=U" + "SDT");
+  assert.equal(asked.length, before, "a second visitor within two seconds costs the exchange nothing");
+  assert.equal((await call("/market/book?ex=nowhere&base=ETH")).status, 400);
+  assert.equal((await call("/market/book?ex=coinbase&base=ETH")).status, 404, "an empty book is no market");
+  assert.equal((await call("/market/book/exchanges")).data.exchanges.length, 11);
+});

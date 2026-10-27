@@ -493,6 +493,7 @@ const MENU = [
     { ru: "Фьючерсы", en: "Futures", items: [
       ["/screener/", "Тренды", "Рост, падение, объём и открытый интерес", "Trends", "Moves, volume and open interest"],
       ["/screener/densities/", "Плотности", "Крупные заявки в стаканах бирж", "Order book walls", "Big orders in the exchanges' books"],
+      ["/screener/book/", "Стакан", "Живой стакан, лента сделок и уровни на графике", "Order book", "A live book, the trades feed and levels on the chart"],
       ["/screener/arbitrage/", "Арбитраж", "Разница цен между биржами", "Arbitrage", "Price gaps between exchanges"],
       ["/screener/liquidations/", "Ликвидации", "Закрытые принудительно позиции", "Liquidations", "Positions closed by force"],
       ["/screener/listings/", "Листинги", "Новые монеты на биржах", "Listings", "New coins on the exchanges"],
