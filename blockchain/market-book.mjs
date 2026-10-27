@@ -4,7 +4,7 @@
 // (candles every twenty), so many visitors cost the exchanges no more than one, and it sends the book
 // already gathered into price steps (about 2,000 a side at most), not the exchanges' full answers.
 //
-// GET /market/book?ex=<exchange>&base=ETH&quote=USDT → { ex, base, quote, pair, price, step, bids: [[price, amount]], asks, at }
+// GET /market/book?ex=<exchange>&base=<coin>&quote=<quote> → { ex, base, quote, pair, price, step, bids: [[price, amount]], asks, at }
 // GET /market/book/trades?ex=…&base=…&quote=… → { trades: [{ time, price, amount, side: "buy" | "sell" }] } (newest first)
 // GET /market/book/candles?ex=…&base=…&quote=…&tf=1m|5m|15m|1h|4h|1d → { candles: [[time (s), open, high, low, close, volume]] } (oldest first)
 // GET /market/book/exchanges → { exchanges: [{ id, name, quotes }] }
