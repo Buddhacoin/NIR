@@ -19,12 +19,14 @@ const TF = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 // How each exchange is asked. `quote(q)`: the quote it trades for the asked one (some quote dollars, not the
 // stablecoin); `pair(base, q)`: its name for the market; book / trades / candles: the address and the reading.
+// Binance's spot market is read from its market-data addresses (data-api / data-stream.binance.vision): its
+// main API turns some countries away (the Netherlands among them, where the server is), these do not.
 export const BOOK_EXCHANGES = {
   binance: { name: "Binance", quotes: [STABLE, "BTC"], pair: (base, quote) => `${base}${quote}`,
-    book: (pair) => `https://api.binance.com/api/v3/depth?symbol=${pair}&limit=5000`, readBook: (answer) => ({ bids: pairs(answer?.bids), asks: pairs(answer?.asks) }),
-    trades: (pair) => `https://api.binance.com/api/v3/trades?symbol=${pair}&limit=500`,
+    book: (pair) => `https://data-api.binance.vision/api/v3/depth?symbol=${pair}&limit=5000`, readBook: (answer) => ({ bids: pairs(answer?.bids), asks: pairs(answer?.asks) }),
+    trades: (pair) => `https://data-api.binance.vision/api/v3/trades?symbol=${pair}&limit=500`,
     readTrades: (answer) => (Array.isArray(answer) ? answer : []).map((item) => ({ time: num(item.time), price: num(item.price), amount: num(item.qty), side: item.isBuyerMaker ? "sell" : "buy" })),
-    candles: (pair, tf) => `https://api.binance.com/api/v3/klines?symbol=${pair}&interval=${tf}&limit=500`,
+    candles: (pair, tf) => `https://data-api.binance.vision/api/v3/klines?symbol=${pair}&interval=${tf}&limit=500`,
     readCandles: (answer) => (Array.isArray(answer) ? answer : []).map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[5]]) },
   "binance-f": { name: "Binance Futures", quotes: [STABLE], pair: (base) => `${base}${STABLE}`,
     book: (pair) => `https://fapi.binance.com/fapi/v1/depth?symbol=${pair}&limit=1000`, readBook: (answer) => ({ bids: pairs(answer?.bids), asks: pairs(answer?.asks) }),
@@ -164,7 +166,7 @@ export function gatherBook({ bids, asks }, range = 1, keep = 800) {
 // join as soon as they change; a fresh snapshot every ten minutes corrects the near part. A pair nobody
 // has looked at for half an hour is let go; the busiest few are kept from the start.
 const STREAMS = {
-  binance: { socket: (pair) => `wss://stream.binance.com:9443/ws/${pair.toLowerCase()}@depth@100ms`, futures: false },
+  binance: { socket: (pair) => `wss://data-stream.binance.vision/ws/${pair.toLowerCase()}@depth@100ms`, futures: false },
   "binance-f": { socket: (pair) => `wss://fstream.binance.com/ws/${pair.toLowerCase()}@depth@100ms`, futures: true },
   // Bybit's stream sends the book's first 1,000 levels and then their changes (its REST answer has 200 or 500).
   bybit: { socket: () => "wss://stream.bybit.com/v5/public/spot", bybit: true },

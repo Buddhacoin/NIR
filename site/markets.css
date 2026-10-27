@@ -1494,3 +1494,5 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-daily-wrap { max-height: 560px; overflow-y: auto; }
 .bk-daily { font-variant-numeric: tabular-nums; }
 .bk-daily thead th { position: sticky; top: 0; background: var(--card); }
+/* Room beside the order book's chart, so the page can be scrolled with the pointer next to it. */
+@media (min-width: 1000px) { .bk-chart-box { margin-right: 56px; margin-left: 56px; } }

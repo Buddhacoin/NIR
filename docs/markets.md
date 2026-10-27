@@ -362,7 +362,7 @@ coloured by the change, stablecoins left out unless asked for.
 
 The order book screener (`/screener/book/`, `site/book.js`,
 `blockchain/market-book.mjs`): one pair on one of eight exchanges, spot or
-futures (Binance, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
+futures (Binance — its spot market from its market-data addresses, which serve the Netherlands —, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
 Bitfinex, HitBTC), or several side by side in the constructor. `GET
 /market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
 most every two seconds whoever asks and sends the exchange's own price levels
