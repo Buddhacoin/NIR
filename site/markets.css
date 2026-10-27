@@ -1161,3 +1161,16 @@ html.touch { overscroll-behavior-y: contain; }
 }
 #card .act.ghost { border-color: #ffffff33; color: #eef1f6; }
 #card .w-avatar { margin: 0; font-size: 14px; }
+/* The way to a wallet's bubbles from any list of wallets (common.js bubblesLink). */
+.viz-link { display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: 4px; border: 1px solid var(--line); border-radius: 50%;
+  color: var(--accent); vertical-align: middle; flex: none; }
+.viz-link:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.viz-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.viz-link.wide { display: inline-flex; gap: 5px; width: auto; height: auto; margin: 0 6px 0 0; border-radius: 999px; }
+.viz-act { display: inline-flex; align-items: center; gap: 7px; }
+.viz-act svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+#track.on { border-color: var(--accent); color: var(--accent); }
+.note-bar.ok { border-color: color-mix(in srgb, var(--up) 40%, transparent); color: var(--text); }
+@media (max-width: 700px) { .viz-link.wide { gap: 0; padding: 7px; font-size: 0; } }
+/* Signed in, the bell joins the phone's header: the brand drops its second word to make room. */
+@media (max-width: 600px) { .top:has(.pill.bell) .brand small { display: none; } }

@@ -518,3 +518,28 @@ test("OpenSea profiles: a wallet's username, picture and linked X account; found
   assert.deepEqual([hit.name, hit.entity, hit.checked], ["zeus_olympus", "OpenSea · @zeusolympus", true]);
   assert.equal(chain.names.name(zeus).name, "zeus_olympus", "the profile joins the book");
 });
+
+test("the service keeps every transfer it reads in its own store and answers a wallet's links from there", async () => {
+  const { createLedger } = await import("../blockchain/market-ledger.mjs");
+  const ledger = createLedger({ cap: 3 });
+  const item = (id, time, from, to, usd) => ({ id, chain: "eth", time, from: { address: from }, to: { address: to }, token: { symbol: "ZEUS" }, amount: 1, usd });
+  const zeus = "0x" + "a".repeat(40);
+  const hera = "0x" + "b".repeat(40);
+  assert.equal(ledger.store([item("1", 10, zeus, hera, 5), item("2", 20, hera, zeus, 7), item("1", 10, zeus, hera, 5)]), 2, "a transfer is kept once");
+  assert.deepEqual(ledger.rows(zeus.toUpperCase().replace("0X", "0x")).map((row) => row.id), ["2", "1"], "both ways, newest first");
+  ledger.markCrawled(zeus, "eth", { headAt: 5, cursor: { page: 2 }, done: false, pages: 3 });
+  assert.deepEqual(ledger.crawled(zeus, "eth"), { headAt: 5, cursor: { page: 2 }, done: false, pages: 3 });
+
+  const { get, rpc, asked } = explorers();
+  const chain = createChain({ get, rpc, now: () => Date.UTC(2026, 9, 25, 18, 15), ledger: createLedger(), crawlGap: 0, crawlPages: 2 });
+  const links = await chain.links(EXCHANGE);
+  assert.ok(links.rows.length > 0, "the newest pages of every network come in before the answer");
+  for (const [time, network, other, incoming, usd] of links.rows) {
+    assert.ok(Number.isFinite(time) && typeof network === "string" && links.parties[other]?.address && [0, 1].includes(incoming));
+    assert.ok(usd === null || Number.isFinite(usd));
+  }
+  const before = asked.length;
+  const again = await chain.links(EXCHANGE);
+  assert.ok(again.rows.length >= links.rows.length);
+  assert.ok(asked.length - before <= 4, "a fresh wallet is answered from the store, not the explorers");
+});

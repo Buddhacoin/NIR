@@ -315,3 +315,27 @@ test("the trend screener merges the exchanges' futures markets by coin and fills
   assert.ok(Math.abs(row.ch5m - 10) < 1e-9, "10% over five minutes");
   assert.equal(row.ch1h, null);
 });
+
+test("the trend screener fills four hours from the exchanges' candles and keeps its snapshots across a restart", async () => {
+  const { createScreener, readCandles } = await import("../blockchain/market-screener.mjs");
+  const clock = 1_700_000_000_000;
+  const start = clock - 50 * 300_000;
+  assert.deepEqual(readCandles("gate", [{ t: 100, c: "2" }]), [[400_000, 2]]);
+  // Five-minute candles from 10 up to 12, the price now 12.
+  const candles = { data: Array.from({ length: 50 }, (_, index) => [String(start + index * 300_000 - 300_000), "0", "0", "0", String(10 + (index * 2) / 49), "0"]) };
+  const ticker = { data: [{ symbol: "ZEUSUSDT", lastPr: "12", change24h: "0", usdtVolume: "1000", holdingAmount: "1" }] };
+  const get = async (url) => (url.includes("candles") ? candles : url.includes("tickers") && url.includes("bitget") ? ticker : null);
+  const files = new Map();
+  const options = { get, now: () => clock, file: "screener.json", read: (path) => files.get(path), write: (path, text) => files.set(path, text) };
+  const screener = createScreener(options);
+  await screener.poll();
+  await screener.backfill(screener.snapshot().rows, clock);
+  await screener.poll();
+  const [row] = screener.snapshot().rows;
+  assert.ok(row.ch4h > 15 && row.ch4h < 21, `four hours from the candles: ${row.ch4h}`);
+  assert.ok(row.ch5m !== null && Math.abs(row.ch5m) < 1);
+  assert.ok(files.has("screener.json"), "the snapshots are saved");
+  const again = createScreener({ ...options, get: async (url) => (url.includes("tickers") && url.includes("bitget") ? ticker : null) });
+  await again.poll();
+  assert.ok(again.snapshot().rows[0].ch4h > 15, "a restart keeps the history");
+});

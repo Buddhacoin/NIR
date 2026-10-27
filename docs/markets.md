@@ -321,8 +321,11 @@ and open interest add up, funding is weighted by volume, and a market far
 off the busiest one's price (another coin under the same ticker) is left
 out. Changes over 5 and 15 minutes, 1 and 4 hours, and open interest over the
 hour and the day come from the server's own snapshots, one a minute kept for
-a day, so after a restart they fill in gradually (until an hour is in, the
-page orders by the day). The page picks the period that sets the order, has
+a day; when the server starts, coins without four hours of them take five-minute
+candles from Bitget or Gate once (about 40 seconds for all), and the snapshots are
+saved beside the accounts database (`screener.json`) every ten minutes, so a
+restart keeps them. Each coin among the 1,000 largest gets its logo and a link to
+its page (the explorer's coin lists, `coinOfSymbol`). The page picks the period that sets the order, has
 ready filters (gainers, losers, open interest rising, high funding, volatile),
 a minimum volume and a search, colours each change by its size and
 refreshes every half minute; on a phone it keeps the coin with the chosen
@@ -494,9 +497,18 @@ so a busy pair shows as a sheaf of lines (the newest 24 of them). Filters: how m
 50, 100), by sum or by time, the smallest sum and the network. Bubbles can be
 dragged, the picture panned and zoomed (with two fingers on a phone); a
 bubble's card shows what passed between the two wallets and can expand that
-wallet's own links in place, open its page or make it the centre. It reads
-the same transfer pages as the wallet's page, so it needs nothing new on the
-server.
+wallet's own links in place, open its page or make it the centre. Its links come in one request from NIR Markets' own store of transfers
+(`blockchain/market-ledger.mjs`, `transfers.db` beside the accounts
+database, `GET /market/chain/address/<address>/links`): every transfer the
+service reads (the live feed, any wallet's pages) is kept there, and asking
+for a wallet's links starts a crawl of its pages: the newest page of every
+network at once (again once it is ten minutes old), then up to 40 older
+pages a network, one request at a time, so the explorers are never flooded.
+The page shows what the store has at once and asks again every few seconds
+while the crawl goes on; the store keeps the newest three million transfers.
+Every list of wallets (transfers, counterparties, popular wallets, the
+profile) has a round bubbles button beside each wallet, and a wallet's page
+the "Bubbles: links" button.
 
 ## A coin's page
 
@@ -508,7 +520,8 @@ whitepaper, source, block explorers, well-known wallets, community), a
 converter, a price chart for 1 day to 1 year with volume bars (TradingView
 candles; every coin TradingView knows opens on its full chart with drawing
 tools and indicators, the largest coin on its cross-exchange index and the
-rest on their Binance pair, and the line chart stays one click away), the description (Russian when
+rest on their pair on Binance or another big exchange TradingView carries, else on
+the bare ticker pair, which TradingView finds by itself, and the line chart stays one click away), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
 column shows only when some market has a rating). The page is one panel, its

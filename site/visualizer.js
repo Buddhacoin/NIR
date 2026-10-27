@@ -56,7 +56,34 @@ let touched = false; // the visitor moved the picture: it no longer fits itself 
 let fitted = false; // the picture was fitted once this layout settled
 
 // --- Data: a wallet's transfers on the networks, a few pages each.
-async function loadWallet(address, pages) {
+// The wallet's links from NIR Markets' own store of transfers (one request, at once); while the server
+// is still reading the wallet's older pages, asked again every few seconds. Without the store, the
+// wallet's transfer pages are read network by network.
+async function loadWallet(address, pages, round = 0) {
+  const key = lower(address);
+  loading.add(key);
+  if (!round) render();
+  const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/links`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  if (!answer) { await loadPages(address, pages); return; }
+  for (const party of answer.parties) {
+    const known = parties.get(party.address);
+    parties.set(party.address, { ...known, address: known?.address ?? party.address, name: party.name ?? known?.name ?? knownName(party.address), logo: party.logo ?? known?.logo });
+  }
+  for (const [time, chain, other, incoming, usd] of answer.rows) {
+    const them = answer.parties[other].address;
+    const [from, to] = incoming ? [them, key] : [key, them];
+    // The same transfer comes from both wallets' lists: one key for it.
+    ledger.set(`${chain}:${time}:${from}:${to}:${usd}`, { chain, time, usd, from: { address: from }, to: { address: to } });
+  }
+  if (!utxo) chains = [...new Set([...chains, ...answer.rows.map((row) => row[1])])].filter((chain) => CHAINS[chain] && chain !== "btc");
+  if (!answer.rows.length && key === lower(root) && !answer.crawling) failure = t().none;
+  if (answer.crawling && round < 40) setTimeout(() => { void loadWallet(address, pages, round + 1); }, round < 5 ? 2_500 : 5_000);
+  else loading.delete(key);
+  render();
+  layout();
+  void loadOpenNames(shown.nodes.map((item) => item.address)).then(() => draw());
+}
+async function loadPages(address, pages) {
   const key = lower(address);
   loading.add(key);
   render();
@@ -443,15 +470,15 @@ async function start() {
   expanded.push(lower(root));
   layout();
   render();
-  const summary = await fetch(`/market/chain/address/${encodeURIComponent(root)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
-  if (summary) {
+  // The wallet's name and picture come beside its links, not before them.
+  void fetch(`/market/chain/address/${encodeURIComponent(root)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null).then((summary) => {
+    if (!summary) return;
     rootInfo = { name: summary.name ?? knownName(root), logo: summary.logo ?? null };
     parties.set(lower(root), { address: root, ...rootInfo });
-    chains = utxo ? ["btc"] : (summary.networks ?? []).filter((item) => item.ok && item.active).map((item) => item.chain).filter((chain) => chain !== "btc");
-  }
-  render();
+    if (!utxo) chains = [...new Set([...chains, ...(summary.networks ?? []).filter((item) => item.ok && item.active).map((item) => item.chain)])].filter((chain) => chain !== "btc");
+    render();
+  });
   await loadWallet(root, 5);
-  render();
 }
 
 setupGestures();

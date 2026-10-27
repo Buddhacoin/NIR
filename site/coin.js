@@ -73,9 +73,18 @@ let showAll = false;
 let failure = "";
 
 const t = () => words[language];
-const tradingViewSymbol = () => (coin?.id === "bitcoin" ? "CRYPTO:BTCUSD" : !coin || STABLE.has(coin.symbol) ? null
-  : coin.tickers.some((ticker) => ticker.exchange === "binance" && ticker.base === coin.symbol && ticker.target === "USDT")
-    ? `BINANCE:${coin.symbol}USDT` : null);
+// The TradingView chart for every coin: the exchange pair it trades on (Binance first, then the other
+// big exchanges TradingView carries), else the ticker against USDT, which TradingView finds by itself.
+const TV_EXCHANGES = { binance: "BINANCE", bybit_spot: "BYBIT", okex: "OKX", gate: "GATEIO", kucoin: "KUCOIN", mxc: "MEXC", bitget: "BITGET", coinbase: "COINBASE", kraken: "KRAKEN" };
+function tradingViewSymbol() {
+  if (!coin || STABLE.has(coin.symbol) || !/^[A-Z0-9]{1,20}$/.test(coin.symbol ?? "")) return null;
+  if (coin.id === "bitcoin") return "CRYPTO:BTCUSD";
+  for (const [exchange, prefix] of Object.entries(TV_EXCHANGES)) {
+    const ticker = (coin.tickers ?? []).find((item) => item.exchange === exchange && item.base === coin.symbol && ["USDT", "USD"].includes(item.target));
+    if (ticker) return `${prefix}:${coin.symbol}${ticker.target}`;
+  }
+  return `${coin.symbol}USDT`;
+}
 const host = (url) => new URL(url).hostname.replace(/^www\./, "");
 const amount = (value) => (value === null || value === undefined ? "—" : big(value, ""));
 const date = (value) => (value ? new Date(value).toLocaleDateString(locale(), { day: "numeric", month: "short", year: "numeric" }) : "");
@@ -401,9 +410,8 @@ async function loadCoin() {
   } catch {
     if (!coin && retries >= 12) failure = t().unavailable;
   } finally {
-    if (!gone && (!coin || coin.partial) && retries < 30) { retries += 1; setTimeout(loadCoin, Math.min(10_000, 2_000 + retries * 1_000)); }
-    // Out of tries: what is missing shows as missing instead of "loading" for ever.
-    else if (coin?.partial) coin.partial = false;
+    // While the data source is busy the page keeps asking, less often after the first minutes.
+    if (!gone && (!coin || coin.partial)) { retries += 1; setTimeout(loadCoin, retries < 30 ? Math.min(10_000, 2_000 + retries * 1_000) : 30_000); }
     render();
   }
 }

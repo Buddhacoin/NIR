@@ -274,6 +274,9 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   // CoinGecko's free plan allows a handful of requests a minute. A "too many" answer pauses the
   // background work (votes, warming coin pages) for two minutes, so visitors' pages get the room.
   let coolUntil = 0;
+  // Visitors' pages wait out a refusal for half a minute only, and a refusal to the background work
+  // does not hold them up at all.
+  let pageCoolUntil = 0;
   const cg = async (url) => {
     try {
       return await get(url);
@@ -282,9 +285,19 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       throw error;
     }
   };
-  const onDemand = createOnDemand({ get: cg, now, perMinute: coinFetchesPerMinute, maxEntries: 500, blocked: () => now() < coolUntil });
+  const cgPage = async (url) => {
+    try {
+      return await get(url);
+    } catch (error) {
+      if (error?.status === 429) pageCoolUntil = now() + 30_000;
+      throw error;
+    }
+  };
+  const onDemand = createOnDemand({ get: cgPage, now, perMinute: coinFetchesPerMinute, maxEntries: 500, blocked: () => now() < pageCoolUntil });
+  // Sources other than CoinGecko (the Fear & Greed history) have their own small budget.
+  const onOther = createOnDemand({ get, now, perMinute: 10, maxEntries: 20 });
   // Search has a smaller budget of its own, so typing visitors cannot use up the coin pages' room.
-  const onSearch = createOnDemand({ get: cg, now, perMinute: 6, maxEntries: 300, blocked: () => now() < coolUntil });
+  const onSearch = createOnDemand({ get: cgPage, now, perMinute: 6, maxEntries: 300, blocked: () => now() < pageCoolUntil });
   const coinUrl = (id) => `${COINGECKO}/coins/${id}?localization=true&tickers=true&market_data=true` +
     "&community_data=false&developer_data=false&sparkline=false";
 
@@ -445,8 +458,11 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     return { ...entry.value, tickers: entry.value.tickers.map((ticker) => ({ ...ticker, logo: exchangeLogos[ticker.exchange] ?? null })) };
   }
   function partialCoin(row) {
+    // The coin's contracts come from the coin list the explorer keeps, so its trades can show while the rest waits.
+    const known = Object.entries(chain?.platformsOf?.(row.id) ?? {}).filter(([name, address]) => /^[a-z0-9-]{2,40}$/.test(name) && /^[A-Za-z0-9]{20,64}$/.test(String(address ?? "")));
     return { ...row, partial: true, change30d: null, change1y: null, fullyDiluted: null, high24h: null, low24h: null, totalSupply: null,
-      ath: null, athChange: null, athDate: "", atl: null, atlChange: null, atlDate: "", categories: [], platforms: [], contracts: {},
+      ath: null, athChange: null, athDate: "", atl: null, atlChange: null, atlDate: "", categories: [], platforms: known.map(([name]) => name).slice(0, 8),
+      contracts: Object.fromEntries(known.slice(0, 12)),
       description: { en: "", ru: "" }, tickers: [], updatedAt: "", sentimentUp: null,
       links: { websites: [], whitepaper: null, explorers: [], source: [], forums: [], chats: [], reddit: null, x: null, telegram: null } };
   }
@@ -504,7 +520,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       }
     } else if (request.method === "GET" && url.pathname === "/market/fear-greed") {
       try {
-        const entry = await onDemand("fear-greed", "https://api.alternative.me/fng/?limit=365", normalizeFearGreedHistory, 3_600_000);
+        const entry = await onOther("fear-greed", "https://api.alternative.me/fng/?limit=365", normalizeFearGreedHistory, 3_600_000);
         send(response, 200, { history: entry.missing ? [] : entry.value }, 600);
       } catch {
         send(response, 503, { error: "the index is unavailable, try again in a minute" });

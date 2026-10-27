@@ -2,7 +2,7 @@
 // npm run market:serve -- [port] — NIR Markets data for nircoin.com
 // (blockchain/market-service.mjs). Caddy passes /market/* to it.
 // --fixture <directory> serves recorded responses instead (for checks).
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
@@ -10,6 +10,7 @@ import { createAccounts } from "./market-accounts.mjs";
 import { createChain, fetchExplorer } from "./market-chain.mjs";
 import { createOpenSea } from "./market-opensea.mjs";
 import { createScreener } from "./market-screener.mjs";
+import { createLedger } from "./market-ledger.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 
@@ -46,9 +47,13 @@ const logos = env.NIR_MARKET_DB ? createLogos({ dir: join(dirname(env.NIR_MARKET
 const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
   labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos,
   // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
-  opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }) });
+  opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }),
+  // NIR Markets' own store of wallet transfers (transfers.db), read back for the bubbles (market-ledger.mjs).
+  ledger: createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" }) });
 // The trend screener reads the exchanges' public futures tickers once a minute.
-const screener = fixture ? null : createScreener({ get: fetchExplorer });
+// The screener keeps its price snapshots next to the accounts, so a restart does not empty the short-term columns.
+const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol), file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
+  read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
 const service = createMarketService(fixture ? {
   accounts, chain,
   fetch: async (url) => {

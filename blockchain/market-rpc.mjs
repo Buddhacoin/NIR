@@ -104,6 +104,8 @@ export function createNodes({ rpc = postRpc, get, cached }) {
   let ids = null;
   const platformIds = new Map(); // chain id → CoinGecko's platform name, once the lists are in // contract and symbol → CoinGecko id, filled with the token lists
   // The listed tokens of every network: top coins with a contract there, with price and decimals.
+  const platformsById = new Map(); // coin id → { platform: contract }
+  const bySymbol = new Map(); // ticker → { id, image, cap } of the largest coin under it
   async function tokens() {
     return cached("rpc:tokens", 300_000, async () => {
       // The 1,000 largest coins (a later page may fail on a busy minute; the first is enough then).
@@ -117,6 +119,14 @@ export function createNodes({ rpc = postRpc, get, cached }) {
         page(1), ...[2, 3, 4].map((number) => page(number).catch(() => [])),
       ]);
       const byId = new Map([markets, ...more].flatMap((answer) => (Array.isArray(answer) ? answer : [])).map((coin) => [coin.id, coin]));
+      // Each coin's contracts, and the largest coin under each ticker with its logo, for pages that only know a ticker.
+      for (const coin of Array.isArray(list) ? list : []) if (coin?.id && coin.platforms && typeof coin.platforms === "object") platformsById.set(coin.id, coin.platforms);
+      for (const coin of byId.values()) {
+        const symbol = String(coin.symbol ?? "").toUpperCase();
+        const known = bySymbol.get(symbol);
+        if (symbol && (!known || (coin.market_cap ?? 0) > known.cap)) bySymbol.set(symbol, { id: coin.id, cap: coin.market_cap ?? 0,
+          image: /^https:\/\/(?:coin-images|assets)\.coingecko\.com\//.test(coin.image ?? "") ? coin.image : null });
+      }
       const result = {};
       for (const item of Array.isArray(platforms) ? platforms : []) if (Number.isSafeInteger(item?.chain_identifier) && item.id) platformIds.set(item.chain_identifier, String(item.id));
       const platformOf = (node) => node.platform ?? (Array.isArray(platforms) ? platforms : []).find((item) => item?.chain_identifier === node.chainId)?.id;
@@ -281,6 +291,9 @@ export function createNodes({ rpc = postRpc, get, cached }) {
   }
 
   const coinIds = async () => { await tokens(); return ids; };
+  // A ticker's coin among the 1,000 largest ({ id, image }), and a coin's contracts; null until the lists are in.
+  const coinOfSymbol = (symbol) => { if (!bySymbol.size) void tokens().catch(() => {}); return bySymbol.get(String(symbol).toUpperCase()) ?? null; };
+  const platformsOf = (id) => { if (!platformsById.size) void tokens().catch(() => {}); return platformsById.get(id) ?? null; };
   const platform = (chainId) => platformIds.get(chainId) ?? null;
-  return { platform, holdings, listedTokens, addressTransfers, feed, tokens, coinIds, networks: Object.keys(NODES) };
+  return { platform, holdings, listedTokens, addressTransfers, feed, tokens, coinIds, coinOfSymbol, platformsOf, networks: Object.keys(NODES) };
 }

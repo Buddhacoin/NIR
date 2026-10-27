@@ -63,8 +63,10 @@ function tradeTargetOf(item) {
 
 // Called by coin.js whenever the coin is drawn. Network coins start at once; tokens once the full
 // coin data with their contracts is in.
+let tradeFails = 0; // trade requests in a row that got no answer
 function startTrades() {
-  if (tradeTarget || !coin || (coin.partial && !TRADE_NATIVE[coin.id])) return;
+  // A stand-in coin may already carry its contracts (from the explorer's coin list): its trades need no more.
+  if (tradeTarget || !coin || (coin.partial && !TRADE_NATIVE[coin.id] && !Object.keys(coin.contracts ?? {}).length)) return;
   tradeTarget = tradeTargetOf(coin);
   $("#trades").hidden = !tradeTarget;
   if (!tradeTarget) return;
@@ -80,7 +82,8 @@ async function loadTrades() {
   const answer = await fetch(`/market/trades?network=${encodeURIComponent(network)}&token=${encodeURIComponent(token)}`)
     .then((response) => (response.ok ? response.json() : null)).catch(() => null);
   tradeLoading = false;
-  if (!answer) { if (!tradeData) setTimeout(loadTrades, 5_000); return; }
+  if (!answer) { tradeFails += 1; if (!tradeData) { renderTrades(); setTimeout(loadTrades, tradeFails < 6 ? 5_000 : 20_000); } return; }
+  tradeFails = 0;
   const fresh = tradeData ? new Set(answer.trades.filter((trade) => !tradeSeen.has(trade.tx)).map((trade) => trade.tx)) : new Set();
   tradeSeen = new Set(answer.trades.map((trade) => trade.tx));
   tradeData = { ...answer, fresh };
@@ -105,7 +108,7 @@ function renderTrades() {
     row.append(cell);
     return row;
   };
-  if (!tradeData) { $("#trades-rows").replaceChildren(message(words.loading)); return; }
+  if (!tradeData) { $("#trades-rows").replaceChildren(message(tradeFails >= 3 ? (language === "en" ? "The trades source is busy; asking again…" : "Источник сделок сейчас занят, пробую ещё раз…") : words.loading)); return; }
   const { pool, trades, buys, sells, fresh } = tradeData;
   if (!pool) {
     $("#trades-pool").textContent = "";

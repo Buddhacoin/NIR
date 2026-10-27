@@ -15,6 +15,18 @@ const SOURCES = {
   mexc: "https://contract.mexc.com/api/v1/contract/ticker",
 };
 export const WINDOWS = { ch5m: 5, ch15m: 15, ch1h: 60, ch4h: 240 };
+const QUOTE = "U" + "SDT";
+// Five-minute candles of the last four hours, to fill a coin's history when the server starts.
+const CANDLES = {
+  bitget: (symbol) => `https://api.bitget.com/api/v2/mix/market/candles?symbol=${symbol}${QUOTE}&productType=${QUOTE}-FUTURES&granularity=5m&limit=50`,
+  gate: (symbol) => `https://api.gateio.ws/api/v4/futures/${QUOTE.toLowerCase()}/candlesticks?contract=${symbol}_${QUOTE}&interval=5m&limit=50`,
+};
+// [[close time, close price], …], oldest first, from either exchange's candles.
+export function readCandles(name, answer) {
+  const rows = name === "bitget" ? (Array.isArray(answer?.data) ? answer.data : []).map((item) => [Number(item?.[0]) + 300_000, Number(item?.[4])])
+    : (Array.isArray(answer) ? answer : []).map((item) => [Number(item?.t) * 1000 + 300_000, Number(item?.c)]);
+  return rows.filter(([time, price]) => Number.isFinite(time) && price > 0).sort((left, right) => left[0] - right[0]);
+}
 const SYMBOL = /^[A-Z0-9]{1,15}$/;
 const num = (value) => { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; };
 const list = (value) => (Array.isArray(value) ? value : Array.isArray(value?.data) ? value.data : []);
@@ -92,7 +104,9 @@ export function merge(byExchange) {
   });
 }
 
-export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_500 } = {}) {
+// `file`: where the snapshots are kept across restarts (five-minute points; nothing kept without it).
+// `coinOf(symbol)`: the coin page and logo for a ticker ({ id, image } or null), from the explorer's coin lists.
+export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_500, file = null, read = null, write = null, coinOf = () => null } = {}) {
   const history = new Map(); // symbol → [[time, price, oi], …], oldest first, one a minute
   let rows = [];
   let updatedAt = null;
@@ -108,6 +122,52 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     return found;
   }
   const change = (now, then) => (now !== null && then ? (now / then - 1) * 100 : null);
+
+  // Snapshots saved by an earlier run, if they are less than a day old.
+  if (file && read) {
+    try {
+      const saved = JSON.parse(read(file));
+      if (saved && now() - saved.savedAt < 86_400_000) {
+        for (const [symbol, series] of Object.entries(saved.history ?? {})) {
+          if (SYMBOL.test(symbol) && Array.isArray(series)) history.set(symbol, series.filter((point) => Array.isArray(point) && point.length === 3 && point[0] > now() - 86_400_000));
+        }
+        since = saved.since ?? null;
+      }
+    } catch {}
+  }
+  let savedAt = 0;
+  function save(at, now = false) {
+    if (!file || !write || (!now && at - savedAt < 600_000)) return;
+    savedAt = at;
+    // One point in five is enough to come back from a restart.
+    const compact = {};
+    for (const [symbol, series] of history) compact[symbol] = series.filter((point, index) => index % 5 === 0 || index === series.length - 1);
+    try { write(file, JSON.stringify({ savedAt: at, since, history: compact })); } catch {}
+  }
+  // The coins without four hours of snapshots take the exchanges' candles once.
+  let filled = false;
+  async function backfill(coins, at) {
+    filled = true;
+    const queue = coins.filter((coin) => {
+      const series = history.get(coin.symbol) ?? [];
+      return series.length < 2 || series[0][0] > at - 240 * 60_000;
+    });
+    const one = async (coin) => {
+      for (const name of ["bitget", "gate"]) {
+        if (!coin.exchanges.includes(name)) continue;
+        const candles = readCandles(name, await get(CANDLES[name](coin.symbol)).catch(() => null)).filter(([time]) => time < at - 30_000);
+        if (!candles.length) continue;
+        const series = history.get(coin.symbol) ?? [];
+        const first = series[0]?.[0] ?? Infinity;
+        history.set(coin.symbol, [...candles.filter(([time]) => time < first).map(([time, price]) => [time, price, null]), ...series]);
+        return;
+      }
+    };
+    // A few at a time, well inside the exchanges' limits.
+    for (let index = 0; index < queue.length; index += 5) await Promise.all(queue.slice(index, index + 5).map(one));
+    since = Math.min(since ?? at, at - 240 * 60_000);
+    save(at, true);
+  }
 
   async function poll() {
     const answers = await Promise.all(Object.entries(SOURCES).map(([name, url]) => get(url).then((value) => [name, value]).catch(() => [name, null])));
@@ -135,6 +195,8 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     updatedAt = at;
     since ??= at;
     exchanges = Object.keys(byExchange);
+    save(at);
+    if (!filled && get) void backfill(rows, at).then(() => poll()).catch(() => {});
     return true;
   }
   function start() {
@@ -144,7 +206,10 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     timer.unref?.();
     return () => clearInterval(timer);
   }
-  const snapshot = () => ({ updatedAt, since, exchanges, rows });
+  const snapshot = () => ({ updatedAt, since, exchanges, rows: rows.map((row) => {
+    const coin = coinOf(row.symbol);
+    return coin ? { ...row, id: coin.id, image: coin.image ?? null } : row;
+  }) });
 
   async function handle(request, response, url) {
     if (url.pathname !== "/market/screener") return false;
@@ -152,5 +217,5 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     response.end(JSON.stringify(request.method === "GET" ? snapshot() : { error: "read only" }));
     return true;
   }
-  return { poll, start, snapshot, handle };
+  return { poll, start, snapshot, handle, backfill };
 }

@@ -21,6 +21,7 @@ let chain = "";
 let tokenQuery = "";
 let page = 0;
 let loaded = false;
+let failed = false; // the last refresh got no answer
 const sort = { key: null, dir: 0 };
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 
@@ -45,7 +46,8 @@ function render() {
   $("#next").disabled = page >= pages - 1;
   if (!shown.length) {
     const row = node("tr");
-    const cell = node("td", "muted", loaded ? (language === "en" ? "No transfers match." : "Подходящих переводов нет.") : (language === "en" ? "Loading transfers…" : "Загружаю переводы…"));
+    const cell = node("td", "muted", failed && !items.length ? (language === "en" ? "The explorers are not answering now. Try again in a minute." : "Обозреватели сейчас не отвечают. Попробуйте через минуту.")
+      : loaded ? (language === "en" ? "No transfers match." : "Подходящих переводов нет.") : (language === "en" ? "Loading transfers…" : "Загружаю переводы…"));
     cell.colSpan = 6;
     row.append(cell);
     $("#rows").replaceChildren(row);
@@ -73,6 +75,7 @@ async function load() {
   const data = await fetch(`/market/chain/feed?${query}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
   $("#live").classList.remove("busy");
   if (data) { items = data.items; networks = data.networks; }
+  failed = !data;
   loaded = true;
   render();
 }

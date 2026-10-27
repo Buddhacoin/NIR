@@ -256,15 +256,30 @@ function walletAvatar(party, className = "w-avatar") {
   }
   return face;
 }
-// A link to a wallet's page: its open name if it has one, else the short address.
-function walletLink(party) {
+// A small round button to a wallet's bubbles (/visualizer/): who it exchanged coins with.
+const BUBBLES_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><circle cx="5" cy="6" r="2.2"/><circle cx="19" cy="7" r="2.2"/><circle cx="18" cy="18.5" r="2.2"/><circle cx="5.5" cy="18" r="2.2"/><path d="m6.8 7.3 2.6 2.6m4.9-.8 3-1.4m-3.6 6.6 2.9 2.7M9.6 14l-2.4 2.6"/></svg>';
+const bubblesUrl = (address) => `/visualizer/?address=${encodeURIComponent(address)}`;
+function bubblesLink(address, withText = false) {
+  const link = Object.assign(document.createElement("a"), { className: withText ? "pill viz-link wide" : "viz-link", href: bubblesUrl(address),
+    title: language === "en" ? "Bubbles: this wallet's links" : "Пузыри: связи кошелька" });
+  link.innerHTML = BUBBLES_ICON;
+  if (withText) link.append(language === "en" ? "Bubbles" : "Пузыри");
+  link.addEventListener("click", (event) => event.stopPropagation());
+  return link;
+}
+// A link to a wallet's page: its open name if it has one, else the short address, and the round
+// button to its bubbles beside it (`bubbles: false` leaves it out where room is short).
+function walletLink(party, { bubbles = true } = {}) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
   if (!party.name && knownName(party.address)) party = { ...party, name: knownName(party.address) };
   const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
   link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
   link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
-  return link;
+  if (!bubbles || !ADDRESS.test(party.address)) return link;
+  const both = document.createDocumentFragment();
+  both.append(link, bubblesLink(party.address));
+  return both;
 }
 function timeAgo(time) {
   const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
