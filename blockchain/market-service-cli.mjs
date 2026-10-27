@@ -52,7 +52,7 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
   ledger: createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" }) });
 // The trend screener reads the exchanges' public futures tickers once a minute.
 // The screener keeps its price snapshots next to the accounts, so a restart does not empty the short-term columns.
-const screener = fixture ? null : createScreener({ get: fetchExplorer, file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
+const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol), file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
   read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
 const service = createMarketService(fixture ? {
   accounts, chain,

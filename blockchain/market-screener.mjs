@@ -105,7 +105,8 @@ export function merge(byExchange) {
 }
 
 // `file`: where the snapshots are kept across restarts (five-minute points; nothing kept without it).
-export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_500, file = null, read = null, write = null } = {}) {
+// `coinOf(symbol)`: the coin page and logo for a ticker ({ id, image } or null), from the explorer's coin lists.
+export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_500, file = null, read = null, write = null, coinOf = () => null } = {}) {
   const history = new Map(); // symbol → [[time, price, oi], …], oldest first, one a minute
   let rows = [];
   let updatedAt = null;
@@ -205,7 +206,10 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     timer.unref?.();
     return () => clearInterval(timer);
   }
-  const snapshot = () => ({ updatedAt, since, exchanges, rows });
+  const snapshot = () => ({ updatedAt, since, exchanges, rows: rows.map((row) => {
+    const coin = coinOf(row.symbol);
+    return coin ? { ...row, id: coin.id, image: coin.image ?? null } : row;
+  }) });
 
   async function handle(request, response, url) {
     if (url.pathname !== "/market/screener") return false;

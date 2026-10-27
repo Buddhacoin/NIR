@@ -324,7 +324,8 @@ hour and the day come from the server's own snapshots, one a minute kept for
 a day; when the server starts, coins without four hours of them take five-minute
 candles from Bitget or Gate once (about 40 seconds for all), and the snapshots are
 saved beside the accounts database (`screener.json`) every ten minutes, so a
-restart keeps them. The page picks the period that sets the order, has
+restart keeps them. Each coin among the 1,000 largest gets its logo and a link to
+its page (the explorer's coin lists, `coinOfSymbol`). The page picks the period that sets the order, has
 ready filters (gainers, losers, open interest rising, high funding, volatile),
 a minimum volume and a search, colours each change by its size and
 refreshes every half minute; on a phone it keeps the coin with the chosen
@@ -519,7 +520,8 @@ whitepaper, source, block explorers, well-known wallets, community), a
 converter, a price chart for 1 day to 1 year with volume bars (TradingView
 candles; every coin TradingView knows opens on its full chart with drawing
 tools and indicators, the largest coin on its cross-exchange index and the
-rest on their Binance pair, and the line chart stays one click away), the description (Russian when
+rest on their pair on Binance or another big exchange TradingView carries, else on
+the bare ticker pair, which TradingView finds by itself, and the line chart stays one click away), the description (Russian when
 CoinGecko has it) and the markets where the coin trades, each with the
 exchange's logo (CoinGecko's exchange list, fetched once a day; the trust
 column shows only when some market has a rating). The page is one panel, its

@@ -609,5 +609,5 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

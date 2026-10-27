@@ -87,7 +87,8 @@ function render() {
   const rows = chosen().slice(0, 300);
   $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
-    const coin = coins.get(row.symbol);
+    // The server names the coin page and logo for the 1,000 largest coins; the market list fills in the rest.
+    const coin = row.id ? { id: row.id, symbol: row.symbol, image: row.image ?? coins.get(row.symbol)?.image ?? null } : coins.get(row.symbol);
     if (coin) tr.addEventListener("click", () => { location.href = coinUrl(coin); });
     const name = node("td", "left");
     const cell = node("span", "coin-cell");
