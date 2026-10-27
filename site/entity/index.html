@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=73">
+  <link rel="stylesheet" href="/markets.css?v=74">
 </head>
 <body>
   <div class="nirbar">
@@ -51,20 +51,24 @@
     <section class="ex-head">
       <span class="ex-avatar" id="avatar"></span>
       <div class="ex-who">
-        <h1 id="name">—</h1>
+        <div class="ex-name-row"><h1 id="name">—</h1><span class="ex-entity" id="count" hidden></span><span class="ex-chip tag" id="category" hidden></span></div>
+        <div class="ex-hidden" id="hidden" hidden></div>
         <div class="ex-total"><b id="total">—</b></div>
-        <div class="ex-tags"><span class="ex-chip" id="count"></span></div>
+      </div>
+      <div class="ex-actions">
+        <button class="act" id="follow" type="button"></button>
       </div>
     </section>
-    <p class="muted ex-note" id="note" data-i18n="note">Сумма по известным адресам организации из открытой базы меток. У больших организаций адресов больше, чем знает открытая база, поэтому настоящая сумма может быть выше.</p>
+    <p class="note-bar ok" id="followed" hidden></p>
+    <p class="muted ex-note" id="note"></p>
     <div class="ex-grid">
       <article class="card ex-card ex-panel">
         <div class="ex-ptabs"><button type="button" class="on" data-i18n="portfolio">Портфель</button></div>
         <div class="table-wrap"><table class="ex-table"><thead><tr><th class="left" data-i18n="colAsset">Актив</th><th data-i18n="colAmount">Количество</th><th data-i18n="colValue">Сумма</th></tr></thead><tbody id="assets"></tbody></table></div>
       </article>
       <article class="card ex-card ex-panel">
-        <div class="ex-ptabs"><button type="button" class="on" data-i18n="wallets">Адреса</button></div>
-        <div class="table-wrap"><table class="ex-table"><thead><tr><th class="left" data-i18n="colWallet">Кошелёк</th><th data-i18n="colValue">Сумма</th></tr></thead><tbody id="wallets"></tbody></table></div>
+        <div class="ex-ptabs"><button type="button" class="on" data-i18n="transfers">Переводы</button></div>
+        <div class="table-wrap"><table class="ex-table ex-transfers"><thead><tr><th class="left" data-i18n="colTime">Время</th><th class="left" data-i18n="colFrom">От</th><th class="left" data-i18n="colTo">Кому</th><th data-i18n="colUsd">USD</th></tr></thead><tbody id="transfers"></tbody></table></div>
       </article>
     </div>
   </main>
@@ -84,7 +88,7 @@
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=34"></script>
-  <script src="/entity.js?v=4"></script>
+  <script src="/common.js?v=36"></script>
+  <script src="/entity.js?v=6"></script>
 </body>
 </html>

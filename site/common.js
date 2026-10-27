@@ -244,6 +244,11 @@ function walletPicture(party) {
   const whale = WHALE.get(lower);
   if (NAME_PICTURES[party.name ?? whale?.name]) return NAME_PICTURES[party.name ?? whale?.name];
   if (party.logo) return party.logo;
+  // An organisation followed as one wallet: the site of one of its well-known wallets.
+  if (/^entity:/.test(party.address)) {
+    const known = WHALES.find((item) => item.site && entityName(item.name) === party.address.slice(7));
+    return known ? `${FAVICON}${known.site}` : null;
+  }
   if (openNames.get(lower)?.logo) return openNames.get(lower).logo;
   if (whale?.site) return `${FAVICON}${whale.site}`;
   const ens = whale?.ens ?? (/^[a-z0-9-]+(\.[a-z0-9-]+)*\.eth$/i.test(party.name ?? "") ? party.name : null);
@@ -278,8 +283,23 @@ function bubblesLink(address, withText = false) {
 }
 // A link to a wallet's page: its open name if it has one, else the short address, and the round
 // button to its bubbles beside it (`bubbles: false` leaves it out where room is short).
+// What kind of owner a wallet has (the book's categories, market-names.mjs).
+const CATEGORY_NAMES = {
+  exchange: ["Биржа", "Exchange"], fund: ["Фонд", "Fund"], "market-maker": ["Маркетмейкер", "Market maker"], bridge: ["Мост", "Bridge"],
+  defi: ["DeFi", "DeFi"], government: ["Государство", "Government"], miner: ["Майнер", "Miner"], custodian: ["Кастодиан", "Custodian"],
+  company: ["Компания", "Company"], individual: ["Персона", "Individual"], whale: ["Кит", "Whale"],
+};
+const categoryName = (category) => CATEGORY_NAMES[category]?.[language === "en" ? 1 : 0] ?? null;
+const ENTITY_KEY = /^entity:/;
 function walletLink(party, { bubbles = true } = {}) {
   if (!party?.address) return Object.assign(document.createElement("span"), { className: "muted", textContent: "—" });
+  // An organisation followed as one wallet ("entity:Binance"): its name, linking to its page; no address.
+  if (ENTITY_KEY.test(party.address)) {
+    const name = party.name || party.address.replace(ENTITY_KEY, "");
+    const link = Object.assign(document.createElement("a"), { className: "wallet", href: entityUrl(party.address.replace(ENTITY_KEY, "")), title: name });
+    link.append(walletAvatar({ ...party, name }), Object.assign(document.createElement("b"), { textContent: name }));
+    return link;
+  }
   if (!party.name && knownName(party.address)) party = { ...party, name: knownName(party.address) };
   const link = Object.assign(document.createElement("a"), { className: "wallet", href: addressUrl(party.address), title: party.address });
   // A picture only for a wallet with a name; a bare address gets a copy button instead.

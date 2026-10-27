@@ -22,7 +22,7 @@ const words = {
     trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
     mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
     addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
-    entityHint: (name) => `Все адреса: ${name}`,
+    entityHint: (name) => `Все адреса: ${name}`, guessed: "по поведению",
     mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
     trackDone: "Готово: кошелёк добавлен в ваш профиль, вкладка «Отслеживаемые» — там его баланс и новые переводы.", openTracked: "Открыть →",
     mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
@@ -51,7 +51,7 @@ const words = {
     trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
     mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
     addresses: (count) => `${count >= 1000 ? `${(count / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}k` : count} addresses`,
-    entityHint: (name) => `All addresses: ${name}`,
+    entityHint: (name) => `All addresses: ${name}`, guessed: "by behaviour",
     mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
     trackDone: "Done: the wallet is in your profile under Tracked, with its balance and new transfers.", openTracked: "Open →",
     mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
@@ -158,7 +158,9 @@ function renderHead() {
     chip.append(chainDot(item.chain), chainName(item.chain), ...(item.sent ? [node("span", "muted", `· ${t().txs(item.sent)}`)] : []));
     return chip;
   }),
-    ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
+    ...data.tags.map((tag) => node("span", "ex-chip tag", tag)),
+    // The owner's kind from NIR Markets' book; a guess from the wallet's behaviour says so.
+    ...(categoryName(data.category) ? [node("span", "ex-chip tag", data.guessed ? `${categoryName(data.category)} · ${t().guessed}` : categoryName(data.category))] : []));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("on", Boolean(saved));
   $("#track").title = t().trackHint;

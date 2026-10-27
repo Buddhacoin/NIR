@@ -1366,3 +1366,10 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .ex-entity:hover { border-color: var(--accent); }
 .ex-entity svg { width: 16px; height: 16px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .ex-entity[hidden] { display: none; }
+/* An organisation's page (entity.js): its addresses hidden behind a lock, one shown half. */
+.ex-hidden { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.ex-hidden svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.ex-hidden[hidden] { display: none; }
+.ex-total small { font-size: 13px; font-weight: 600; }
+.ex-chip.tag[hidden] { display: none; }
+.ex-table .coin-cell .chain-dot { width: 14px; height: 14px; }

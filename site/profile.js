@@ -69,8 +69,17 @@ async function loadSaved() {
 function holdingsOf(address) {
   if (!holdings.has(address)) {
     holdings.set(address, "loading");
-    fetch(`/market/chain/address/${encodeURIComponent(address)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null)
-      .then((data) => { holdings.set(address, data ?? "failed"); if (view === "wallets" || view === "tracked") renderView(); renderDashboard(); });
+    // An organisation followed as one wallet ("entity:Binance"): the server adds up its addresses' holdings.
+    const entity = /^entity:/.test(address) ? address.slice(7) : null;
+    fetch(entity ? `/market/chain/entity?name=${encodeURIComponent(entity)}` : `/market/chain/address/${encodeURIComponent(address)}`)
+      .then((response) => (response.ok ? response.json() : null)).catch(() => null)
+      .then((data) => {
+        holdings.set(address, entity && data ? { ...data, kind: "entity", address, networks: [] } : data ?? "failed");
+        // Its balances fill in over a minute or two on the server: asked again until they are all in.
+        if (entity && data && !data.done) setTimeout(() => { holdings.delete(address); holdingsOf(address); }, 15_000);
+        if (view === "wallets" || view === "tracked") renderView();
+        renderDashboard();
+      });
   }
   const data = holdings.get(address);
   return data === "loading" || data === "failed" ? null : data;

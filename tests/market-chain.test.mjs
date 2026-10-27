@@ -246,6 +246,11 @@ test("signed-in visitors keep a private list of tracked and own addresses", asyn
     assert.equal((await call(`/market/me/wallet-portfolios/${trading.data.id}`, { cookie: undefined, method: "DELETE" })).status, 401);
     const athena = await signIn("athena");
     assert.deepEqual((await call("/market/me/addresses", { cookie: athena })).data.addresses, []);
+    // An organisation is followed as one wallet, by its name: its addresses stay on the server.
+    const followed = await call(`/market/me/addresses/${encodeURIComponent("entity:Olympus")}`, { cookie: zeus, method: "PUT", body: { mine: true, portfolioId: main.id } });
+    assert.equal(followed.data.addresses.find((item) => item.address === "entity:Olympus").portfolioId, main.id);
+    assert.equal((await call(`/market/me/addresses/${encodeURIComponent("entity:O")}`, { cookie: zeus, method: "PUT", body: {} })).status, 400);
+    await call(`/market/me/addresses/${encodeURIComponent("entity:Olympus")}`, { cookie: zeus, method: "DELETE" });
     assert.equal((await call(`/market/me/addresses/${UTXO}`, { cookie: zeus, method: "DELETE" })).data.addresses.length, 1);
     await call("/market/me", { cookie: zeus, method: "DELETE" });
     const back = await signIn("zeus");
@@ -566,6 +571,85 @@ test("an organisation's known wallets are found by its label or the start of the
   assert.deepEqual(names.members("Olympus").map((item) => item.address).sort(), [wallet("1"), wallet("2"), wallet("3")],
     "not an exploiter, a deposit address or another name that merely starts the same");
   assert.deepEqual(names.members("O"), [], "too short a name finds nothing");
+});
+
+test("every name gets the kind of its owner, and the book keeps the history of who named an address and when", async () => {
+  const { createNames, categorize } = await import("../blockchain/market-names.mjs");
+  assert.equal(categorize({ name: "Binance: Hot Wallet 14" }), "exchange");
+  assert.equal(categorize({ name: "Grayscale Bitcoin Trust" }), "fund");
+  assert.equal(categorize({ name: "Wintermute 3" }), "market-maker");
+  assert.equal(categorize({ name: "Lido: stETH" }), "defi");
+  assert.equal(categorize({ name: "U.S. Government: Seized Funds" }), "government");
+  assert.equal(categorize({ name: "Olympus Labs: Treasury" }), "company");
+  assert.equal(categorize({ name: "Somebody" }), "other");
+  assert.equal(categorize({ name: "Somebody", groups: ["fund"] }), "fund", "the open labels' group list decides first");
+  const names = createNames({ get: async () => null });
+  const wallet = `0x${"a".repeat(40)}`;
+  names.remember([{ address: wallet, name: "Olympus: Hot Wallet", entity: "Olympus" }], "search");
+  assert.equal(names.name(wallet).category, "exchange");
+  names.remember([{ address: wallet, name: "Olympus Fund", entity: "Olympus" }], "users");
+  assert.deepEqual(names.history(wallet).map((row) => [row.name, row.category, row.source]),
+    [["Olympus: Hot Wallet", "exchange", "search"], ["Olympus Fund", "fund", "users"]]);
+});
+
+test("wallets' behaviour names deposit addresses and finds likely hot wallets, never over another source's name", async () => {
+  const { createNames } = await import("../blockchain/market-names.mjs");
+  const { createLedger } = await import("../blockchain/market-ledger.mjs");
+  const { createBehaviour, guessFromBehaviour } = await import("../blockchain/market-behaviour.mjs");
+  const names = createNames({ get: async () => null });
+  const ledger = createLedger();
+  const wallet = (index) => `0x${index.toString(16).padStart(40, "0")}`;
+  const hot = wallet(1);
+  const unknown = wallet(2);
+  names.remember([{ address: hot, name: "Olympus: Hot Wallet", entity: "Olympus" }, { address: wallet(50), name: "Alice", entity: null }], "labels");
+  let id = 0;
+  const send = (from, to, time = 1_000) => ({ id: String(id++), chain: "eth", time, from: { address: from }, to: { address: to }, token: { symbol: "ETH" }, amount: 1, usd: 1 });
+  // Ten deposit addresses pass everything to the hot wallet; one sends once only; one also pays elsewhere.
+  ledger.store([...Array.from({ length: 10 }, (_, index) => [send(wallet(100 + index), hot), send(wallet(100 + index), hot)]).flat(),
+    send(wallet(200), hot), send(wallet(201), hot), send(wallet(201), hot), send(wallet(201), unknown),
+    send(wallet(50), hot), send(wallet(50), hot),
+    // Thirty single-target senders feed an address nobody named.
+    ...Array.from({ length: 30 }, (_, index) => [send(wallet(300 + index), unknown), send(wallet(300 + index), unknown)]).flat()]);
+  const behaviour = createBehaviour({ ledger, names, now: () => 2_000 });
+  const result = behaviour.run();
+  assert.ok(result.added >= 11);
+  assert.deepEqual(names.name(wallet(100)), { name: "Olympus: Deposit", entity: "Olympus", site: null, logo: null, category: "exchange", guessed: true });
+  assert.equal(names.name(wallet(200)), null, "one transfer is not enough");
+  assert.equal(names.name(wallet(201)), null, "a wallet that pays two places is not a deposit address");
+  assert.equal(names.name(wallet(50)).name, "Alice", "a name from another source stays");
+  assert.deepEqual([names.name(unknown).name, names.name(unknown).category, names.name(unknown).guessed], [null, "exchange", true]);
+  assert.equal(names.history(wallet(100)).at(-1).source, "behaviour");
+  assert.deepEqual(guessFromBehaviour([], () => null), []);
+});
+
+test("an organisation is shown as one wallet: its holdings added up, its transfers under its name, its addresses kept back", async () => {
+  const { createLedger } = await import("../blockchain/market-ledger.mjs");
+  const ledger = createLedger();
+  const wallet = (digit) => `0x${digit.repeat(40)}`;
+  const get = async (url) => {
+    if (url.includes("/token-balances")) return [];
+    if (/\/addresses\/0x/.test(url)) return { hash: url.split("/").pop(), coin_balance: "2000000000000000000", exchange_rate: "1000" };
+    return null;
+  };
+  const chain = createChain({ get, rpc: async () => { throw new Error("no nodes"); }, ledger, tokenWait: 50, now: () => 5_000 });
+  chain.names.remember([{ address: wallet("1"), name: "Olympus: Hot Wallet", entity: "Olympus" }, { address: wallet("2"), name: "Olympus 2", entity: "Olympus" }], "labels");
+  ledger.store([{ id: "t1", chain: "eth", time: 4_000, from: { address: wallet("3") }, to: { address: wallet("1") }, token: { symbol: "ETH" }, amount: 1, usd: 1_000 },
+    { id: "t2", chain: "eth", time: 4_500, from: { address: wallet("1") }, to: { address: wallet("2") }, token: { symbol: "ETH" }, amount: 1, usd: 1_000 }]);
+  const ask = async () => {
+    const response = { status: 0, body: "", writeHead(code) { this.status = code; }, setHeader() {}, end(text) { this.body = text; } };
+    await chain.handle({ method: "GET", headers: {} }, response, new URL("http://x/market/chain/entity?name=Olympus"));
+    return JSON.parse(response.body);
+  };
+  let summary = await ask();
+  for (let wait = 0; !summary.done && wait < 50; wait += 1) { await new Promise((resolve) => setTimeout(resolve, 100)); summary = await ask(); }
+  assert.equal(summary.count, 2);
+  assert.equal(summary.category, "exchange");
+  assert.equal(summary.sample, `${wallet("1").slice(0, 21)}…`, "one address shows, half of it");
+  assert.ok(!JSON.stringify(summary).includes(wallet("2")), "the other addresses do not leave the server");
+  assert.ok(summary.total >= 4_000, "two coins at $1,000 on each of the two wallets, on every network that answered");
+  assert.equal(summary.total, summary.assets.reduce((sum, asset) => sum + asset.usd, 0));
+  assert.deepEqual(summary.transfers.map((item) => [item.from.address, item.to.address]), [[wallet("3"), "entity:Olympus"]],
+    "a transfer between its own wallets is not shown; its side carries its name");
 });
 
 test("Satoshi's early blocks are read key by key, and the ones not read yet count as their untouched reward", async () => {

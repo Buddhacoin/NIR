@@ -71,5 +71,11 @@ export function createLedger({ file = ":memory:", now = Date.now, cap = 3_000_00
     writeCrawl.run(lower(address), chain, headAt ?? now(), cursor ? JSON.stringify(cursor) : null, done ? 1 : 0, pages ?? 0);
   }
   const size = () => Number(count.get().n);
-  return { store, rows, crawled, markCrawled, size, close: () => db.close() };
+  // Wallets that sent at least `least` transfers since `since`, every one of them to the same wallet: the
+  // pattern of an exchange's deposit addresses, which pass everything on to its hot wallet.
+  const forwarders = db.prepare(`SELECT sender, MIN(receiver) AS receiver, COUNT(*) AS n FROM transfers WHERE time > ?
+    GROUP BY sender HAVING COUNT(DISTINCT receiver) = 1 AND COUNT(*) >= ? LIMIT ?`);
+  const singleReceivers = (since = 0, least = 2, limit = 200_000) => forwarders.all(since, least, limit)
+    .map((row) => ({ sender: row.sender, receiver: row.receiver, count: Number(row.n) }));
+  return { store, rows, crawled, markCrawled, size, singleReceivers, close: () => db.close() };
 }

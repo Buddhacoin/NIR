@@ -573,16 +573,36 @@ their untouched 50 coins. His organisation page, his row in the popular list
 and his genesis address's page show the sum (about 1.1 million coins) and say
 that the attribution is the research's conclusion.
 
-**Organisations** (`/entity/?name=…`, `GET /market/chain/entity?name=…`,
-`GET /market/chain/entities?names=…`): every wallet the open labels' book
-knows for an organisation (its label names it, or its name starts with it,
-as in "Binance 14" or "Binance: Hot Wallet"; exploiters and deposit
-addresses left out), up to 80, plus its wallets in the popular list. The
-page reads their balances a few at a time and adds them up: the total, the
-assets by token and each wallet. A big organisation has more wallets than the
-open book knows, so the page says the real sum may be higher. In the popular
-list an organisation with several known wallets links to its page ("39
-wallets →").
+**Organisations** (`/entity/?name=…`, `GET /market/chain/entity?name=…&extra=…`,
+`GET /market/chain/entities?names=…`): an organisation shows as one wallet,
+as on the analytics sites. The server takes every address its book knows for
+it (its label names it, or its name starts with it, as in "Binance 14" or
+"Binance: Hot Wallet"; exploiters and deposit addresses left out), up to 300,
+plus its wallets in the popular list, reads their balances in the background
+two at a time (kept half an hour) and answers with the total, the assets
+added up by token and network, its recent transfers from the store of
+transfers with its own side shown as its name, how many addresses it has and
+one of them half hidden. The addresses themselves stay on the server, so the
+book cannot be copied off the site. A visitor follows the organisation as a
+whole: "+ Add to portfolio" saves it as `entity:<name>` in their first
+portfolio of wallets, where the Tracking tab shows its balance and
+transfers. An address's page shows a badge beside its name with how many
+addresses its organisation has ("53 addresses"), linking to that page. In the
+popular list an organisation with several known wallets links to its page
+("39 wallets →").
+
+**The book of attributions** (`names.db`, `market-names.mjs`): each name has
+the kind of its owner (exchange, fund, market maker, bridge, DeFi,
+government, miner, custodian, company, person, whale or other), read from the
+open labels' group lists, the books' label words and the name itself; the
+address page shows it as a tag. Every name, owner or kind an address is given
+is written to its history with the source and time (`label_history`).
+Every hour `market-behaviour.mjs` reads the last 90 days of the store of
+transfers for the pattern of exchange deposit addresses: a wallet that sent
+everything (two transfers or more) to one wallet of an exchange becomes
+"<exchange>: Deposit", and an unnamed wallet fed by 25 or more such wallets is
+marked a likely exchange without a name. Guesses never replace a name from any
+other source and show as "by behaviour".
 
 The arbitrage screener (`/screener/arbitrage/`, `GET /market/arbitrage`) uses
 the trend screener's readings, which now take Binance's and Bybit's tickers

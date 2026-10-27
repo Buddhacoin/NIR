@@ -11,6 +11,7 @@ import { createChain, fetchExplorer } from "./market-chain.mjs";
 import { createOpenSea } from "./market-opensea.mjs";
 import { createScreener } from "./market-screener.mjs";
 import { createLedger } from "./market-ledger.mjs";
+import { createBehaviour } from "./market-behaviour.mjs";
 import { createDensities } from "./market-densities.mjs";
 import { createPatoshi } from "./market-patoshi.mjs";
 import { createLiquidations } from "./market-liquidations.mjs";
@@ -47,6 +48,7 @@ const namesFile = env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "names.db
 const catalogue = { optimism: "optimism", base: "base", arbitrum: "arbitrum", polygon: "polygon", bsc: "smartchain" };
 const logos = env.NIR_MARKET_DB ? createLogos({ dir: join(dirname(env.NIR_MARKET_DB), "logos"),
   catalogue: (network) => catalogue[network] ?? (network === "eth" ? chain.platform(1) : null) }) : null;
+const ledger = createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" });
 const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
   labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos,
   // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
@@ -55,7 +57,7 @@ const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((c
   // Satoshi Nakamoto's early coins, read key by key into patoshi.db (market-patoshi.mjs).
   patoshi: fixture ? null : createPatoshi({ get: fetchExplorer, file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "patoshi.db") : ":memory:",
     getText: async (url) => { const response = await fetch(url, { signal: AbortSignal.timeout(60_000) }); if (!response.ok) throw new Error(`list answered ${response.status}`); return response.text(); } }),
-  ledger: createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" }) });
+  ledger });
 // The trend screener reads the exchanges' public futures tickers once a minute.
 // The screener keeps its price snapshots next to the accounts, so a restart does not empty the short-term columns.
 const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol), file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "screener.json") : null,
@@ -85,4 +87,6 @@ densities?.start();
 liquidations?.start();
 chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
+// Every hour, names from the wallets' behaviour in the store of transfers (deposit addresses, hot wallets).
+if (!fixture) createBehaviour({ ledger, names: chain.names }).start();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));
