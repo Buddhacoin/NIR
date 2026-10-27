@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=78">
+  <link rel="stylesheet" href="/markets.css?v=79">
 </head>
 <body>
   <div class="nirbar">
@@ -71,7 +71,7 @@
       </div>
       <p class="muted ex-note" id="status"></p>
       <div class="bk-books" id="books"></div>
-      <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API бирж, обновляются каждые 2 секунды. Цены сгруппированы по шагу; показаны уровни не меньше минимального ордера в пределах глубины, жирным — крупные ордера. Не финансовый совет.</p>
+      <p class="muted ex-note" data-i18n="source">Стакан, сделки и свечи — из открытых API и потоков бирж, обновляются каждые 2 секунды. Цены — настоящие уровни биржи; показаны ордера не меньше минимального в пределах глубины, крупные выделены строкой и жирным; итоги сверху — все ордера в пределах глубины. Наведите на строку, чтобы увидеть объём от цены до неё. Не финансовый совет.</p>
     </article>
   </main>
   <div class="bk-drawer-back" id="drawer" hidden>
@@ -98,6 +98,6 @@
   </nav>
   <script src="/common.js?v=37"></script>
   <script src="/vendor/lightweight-charts.js?v=4.2.3"></script>
-  <script src="/book.js?v=6"></script>
+  <script src="/book.js?v=7"></script>
 </body>
 </html>

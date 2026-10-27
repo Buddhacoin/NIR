@@ -443,15 +443,17 @@ test("a futures market that appears after the screener began watching an exchang
   assert.deepEqual([listing.symbol, listing.exchange, listing.price, listing.at], ["HERA", "bitget", 2, clock]);
 });
 
-test("the order book screener gathers a book into price steps and reads each exchange's answers its own way", async () => {
+test("the order book screener keeps the exchange's own levels with their totals and reads each exchange's answers its own way", async () => {
   const { createBook, gatherBook, niceStep } = await import("../blockchain/market-book.mjs");
   assert.equal(niceStep(1.17), 2);
   assert.equal(niceStep(0.0031), 0.005);
-  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.1, 3], [100.9, 4]] }, 0.5, 100);
-  assert.equal(gathered.step, 0.5, "the step follows how far the book reaches (40 below the price, in a hundred steps)");
-  assert.deepEqual(gathered.bids, [[99.5, 1], [99, 2], [60, 5]], "bids round down into their step; one beyond the range is left out");
-  assert.deepEqual(gathered.asks, [[100.5, 3], [101, 4]], "asks round up");
-  assert.equal(gatherBook({ bids: [[99.99, 1]], asks: [[100.01, 1]] }, 0.5, 100).step, 0.0005, "a short book keeps fine prices");
+  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.9, 4], [100.1, 3]] }, 0.5, 2);
+  assert.equal(gathered.price, 100);
+  assert.deepEqual(gathered.bids, [[99.1, 2, 3], [60, 5, 8]], "the exchange's own prices, the largest kept, each with the volume through it; one beyond the range is left out");
+  assert.deepEqual(gathered.asks, [[100.1, 3, 3], [100.9, 4, 7]], "asks best first");
+  assert.deepEqual(gathered.totals.bids[0], [3, 298.1], "within 1 %: every order, the small ones too");
+  assert.deepEqual(gathered.totals.bids[39], [8, 598.1], "within 40 %");
+  assert.equal(gathered.totals.asks.length, 100);
   const asked = [];
   const get = async (url) => {
     asked.push(url);
@@ -469,6 +471,7 @@ test("the order book screener gathers a book into price steps and reads each exc
   };
   const swap = await call("/market/book?ex=okx-f&base=ETH&quote=U" + "SDT");
   assert.deepEqual([swap.data.bids[0][1], swap.data.asks[0][1]], [1, 2], "contracts count as their coins");
+  assert.deepEqual(swap.data.bids[0], [2000, 1, 1]);
   assert.deepEqual((await call("/market/book/trades?ex=okx-f&base=ETH&quote=U" + "SDT")).data.trades, [{ time: 1000, price: 2000.5, amount: 0.30000000000000004, side: "sell" }]);
   const dollars = await call("/market/book?ex=bitfinex&base=ETH&quote=U" + "SDT");
   assert.equal(dollars.data.quote, "USD", "an exchange that trades dollars answers for the stablecoin");

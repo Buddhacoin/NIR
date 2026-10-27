@@ -1444,3 +1444,12 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-books.multi .bk-feed { grid-column: 1 / -1; max-height: 420px; }
 .bk-books.multi .bk-side td, .bk-books.multi .bk-side th { padding: 6px 6px; font-size: 13px; }
 .bk-trades th:first-child, .bk-trades td:first-child { width: 78px; }
+/* Order book, as the order-book tools show it: a big order's whole row lighter and bold (a big trade's too),
+   a row under the pointer tinted by its side, the sides scrolling under their heads. */
+.bk-side tbody tr.big, .bk-trades tbody tr.big { background-color: color-mix(in srgb, var(--text) 9%, transparent); }
+.bk-side tbody tr.big td, .bk-trades tbody tr.big td { color: var(--text); font-weight: 800; }
+.bk-side.bid tbody tr:not(.bk-total):hover { background: color-mix(in srgb, var(--up) 35%, transparent); }
+.bk-side.ask tbody tr:not(.bk-total):hover { background: color-mix(in srgb, var(--down) 35%, transparent); }
+.bk-sides { max-height: 78vh; overflow-y: auto; }
+.bk-side thead th { position: sticky; top: 0; z-index: 1; background: var(--card); }
+.bk-select { width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--soft); color: var(--text); font: inherit; }

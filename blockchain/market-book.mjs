@@ -2,9 +2,10 @@
 // book on one of eight exchanges, spot or futures (or several side by side), its latest trades and its candles, read from the
 // exchanges' public APIs without a key. The server reads each one at most every two seconds whoever asks
 // (candles every twenty), so many visitors cost the exchanges no more than one, and it sends the book
-// already gathered into price steps (about 2,000 a side at most), not the exchanges' full answers.
+// already trimmed to its largest levels (800 a side) with its totals, not the exchanges' full answers.
 //
-// GET /market/book?ex=<exchange>&base=<coin>&quote=<quote> → { ex, base, quote, pair, price, step, bids: [[price, amount]], asks, at }
+// GET /market/book?ex=<exchange>&base=<coin>&quote=<quote> → { ex, base, quote, pair, price, bids: [[price, amount, volume through it]], asks,
+//   totals: { bids: [[coins, quote] within 1 %, 2 %, … 100 %], asks }, levels, full, at }
 // GET /market/book/trades?ex=…&base=…&quote=… → { trades: [{ time, price, amount, side: "buy" | "sell" }] } (newest first)
 // GET /market/book/candles?ex=…&base=…&quote=…&tf=1m|5m|15m|1h|4h|1d → { candles: [[time (s), open, high, low, close, volume]] } (oldest first)
 // GET /market/book/exchanges → { exchanges: [{ id, name, quotes }] }
@@ -125,29 +126,34 @@ export function niceStep(raw) {
   const power = 10 ** Math.floor(Math.log10(raw));
   return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((step) => step >= raw * 0.999);
 }
-// The book gathered into steps of about 1/2000 of the price, within `range` (a share of the price, 90 %) of it:
-// bids rounded down, asks rounded up, as the order-book tools show them. Best price first.
-export function gatherBook({ bids, asks }, range = 0.9, buckets = 2000) {
+// The book as the order-book tools show it: the exchange's own price levels, not gathered into steps.
+// Within the whole reach of the book (`range`, a share of the price), each side keeps its `keep` largest
+// levels (the smaller ones only the smallest-order filter would hide anyway), best price first, each with
+// the volume of every order from the best price up to it; and the side's totals out to each whole per cent
+// of the price (totals[side][n - 1] = [coins, quote] within n %), so a page sums any depth it is set to.
+export function gatherBook({ bids, asks }, range = 1, keep = 800) {
   const best = Math.max(0, ...bids.map(([price]) => price));
   const ask = Math.min(...asks.map(([price]) => price));
   const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
-  if (!price) return { price: null, step: null, bids: [], asks: [] };
-  // The step follows how far the book reaches: a short book (a few hundred levels) keeps its own prices.
-  const within = (list) => list.map(([level]) => Math.abs(level - price)).filter((distance) => distance / price <= range);
-  const span = Math.max(price * 0.0005, ...within(bids), ...within(asks));
-  const step = niceStep(span / buckets);
-  const digits = Math.max(0, -Math.floor(Math.log10(step)) + 2);
-  const round = (value) => Number(value.toFixed(digits));
-  const side = (list, down) => {
-    const sums = new Map();
-    for (const [level, amount] of list) {
-      if (Math.abs(level - price) / price > range) continue;
-      const key = round((down ? Math.floor(level / step + 1e-9) : Math.ceil(level / step - 1e-9)) * step);
-      sums.set(key, (sums.get(key) ?? 0) + amount);
-    }
-    return [...sums].sort((left, right) => (down ? right[0] - left[0] : left[0] - right[0])).map(([level, amount]) => [level, Number(amount.toPrecision(8))]);
+  if (!price) return { price: null, bids: [], asks: [], totals: { bids: [], asks: [] } };
+  const totals = {};
+  const side = (list, down, name) => {
+    const sorted = list.filter(([level]) => Math.abs(level - price) / price <= range).sort((left, right) => (down ? right[0] - left[0] : left[0] - right[0]));
+    const sums = Array.from({ length: 100 }, () => [0, 0]);
+    let coins = 0;
+    const withVolume = sorted.map(([level, amount]) => {
+      coins += amount;
+      const percent = Math.min(100, Math.max(1, Math.ceil((Math.abs(level - price) / price) * 100 - 1e-9)));
+      sums[percent - 1][0] += amount;
+      sums[percent - 1][1] += amount * level;
+      return [level, amount, coins];
+    });
+    for (let index = 1; index < 100; index += 1) { sums[index][0] += sums[index - 1][0]; sums[index][1] += sums[index - 1][1]; }
+    totals[name] = sums.map(([amount, quote]) => [Number(amount.toPrecision(10)), Number(quote.toPrecision(10))]);
+    const biggest = new Set([...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep));
+    return withVolume.filter((row) => biggest.has(row)).map(([level, amount, through]) => [level, Number(amount.toPrecision(10)), Number(through.toPrecision(10))]);
   };
-  return { price: Number(price.toPrecision(10)), step, bids: side(bids, true), asks: side(asks, false) };
+  return { price: Number(price.toPrecision(10)), bids: side(bids, true, "bids"), asks: side(asks, false, "asks"), totals, levels: bids.length + asks.length };
 }
 
 // Bybit's books from its stream too, 1,000 levels instead of its REST answer's 200 or 500.

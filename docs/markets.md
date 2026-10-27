@@ -365,24 +365,24 @@ The order book screener (`/screener/book/`, `site/book.js`,
 futures (Binance, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
 Bitfinex, HitBTC), or several side by side in the constructor. `GET
 /market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
-most every two seconds whoever asks and sends it gathered into steps of about
-1/2000 of the price within 90 % of it. Depth: Coinbase, Bitstamp and HitBTC
+most every two seconds whoever asks and sends the exchange's own price levels
+(each side's 800 largest within its whole reach, each with the volume from the
+best price through it) and each side's totals out to every whole per cent. Depth: Coinbase, Bitstamp and HitBTC
 answer with their whole book; Bitfinex is read at three precisions (exact near
 the price, coarser further out); Binance (spot and futures) is kept in full
 depth by the server from the exchange's stream of every change on top of a
 snapshot, re-read every ten minutes and on any gap; Bybit (spot and futures)
 from its stream's 1,000 levels (its REST answer has 200 or 500); for the pairs looked at in
 the last half hour and the trend screener's six busiest all the time; OKX and Kraken
-give what their open answers hold (a few per cent around the price). The
-price step follows how far each book reaches: a short book keeps its own
-prices (a step of about a three-hundredth of its reach), a full one gathers
-into round steps. The page
+give what their open answers hold (a few per cent around the price). The page
 says how far each book reaches. `/market/book/trades` and
 `/market/book/candles?tf=1m…1d` read the latest trades and candles the same
 way (candles every twenty seconds); exchanges that quote dollars answer for
-the stablecoin. The page gathers the book into a coarser step, keeps the
-levels of at least the smallest order within the chosen depth, shows big
-orders in bold, sums each side within the depth, filters the trades feed by
+the stablecoin. As on the order-book tools, the page shows the exchange's own prices (a
+price step in the settings gathers them), keeps the levels of at least the
+smallest order within the chosen depth (5–60 %, 90 % or MAX, the default),
+shows a big order's whole row lighter and bold, sums every order of each side
+within the depth, gives the volume from the price through a row on a pointer, filters the trades feed by
 the smallest trade, and draws the big orders on a candle chart as levels
 (green under the price, red above; hide, depth and reversed colours in the
 chart settings). Thresholds left empty follow the book (about forty levels

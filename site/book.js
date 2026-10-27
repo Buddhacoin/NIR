@@ -13,7 +13,7 @@ const en = {
   tabTrends: "Trends", tabDensities: "Order book walls", tabBook: "Order book", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
   title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", tools: "Tools",
   settings: "⚙ Settings", chartSettings: "📈 Chart", tradesFeed: "⚡ Trades feed",
-  source: "The book, trades and candles come from the exchanges' open APIs, every 2 seconds. Prices are gathered by a step; the levels shown are at least the smallest order within the depth, big orders in bold. Not financial advice.",
+  source: "The book, trades and candles come from the exchanges' open APIs and streams, every 2 seconds. Prices are the exchange's own levels; orders of at least the smallest within the depth show, big ones with a lighter bold row; the totals on top are every order within the depth. Point at a row for the volume from the price through it. Not financial advice.",
   exchangesCredit: "the exchanges' open APIs",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
@@ -28,9 +28,10 @@ const words = {
     usdMode: "Режим в долларах", usdHint: "Все объёмы задаются и показываются в долларах.", save: "Сохранить", reset: "Сбросить",
     showChart: "Показывать график", showChartHint: "Свечи пары с уровнями крупных ордеров.", hideLevels: "Скрыть уровни", hideLevelsHint: "Не рисовать крупные ордера на графике.",
     levelDepth: "Глубина показа уровней", levelDepthHint: "Насколько далеко от цены рисовать уровни.", reverse: "Реверсия цветов", reverseHint: "Поменять местами цвета уровней поддержки и сопротивления.",
-    config: (cfg) => `Глубина ${cfg.depth}% · ордер от ${cfg.min} · крупный от ${cfg.big} · сделка от ${cfg.minTrade} · шаг ${cfg.step}`,
+    config: (cfg) => `Глубина ${cfg.depth} · ордер от ${cfg.min} · крупный от ${cfg.big} · сделка от ${cfg.minTrade} · шаг ${cfg.step}`,
     reach: (down, up, full) => `Стакан биржи: −${down}% / +${up}% от цены${full ? " · полная глубина из потока" : ""}`,
-    pickMore: "Выберите до 4 бирж", pct: "%", pcs: "шт." },
+    pickMore: "Выберите до 4 бирж", pct: "%", pcs: "шт.", rawStep: "цены биржи", max: "MAX",
+    through: (amount) => `Всего от цены до этого уровня: ${amount}` },
   en: { modes: { single: "Single", multi: "Constructor" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", time: "Time", type: "Type",
     buy: "BUY", sell: "SELL", loading: "Loading the book…", failed: (name) => `${name}: no such pair, or the exchange did not answer`, none: "No levels above the smallest order within the depth.",
     noTrades: "No trades above the smallest.", total: "Total within the depth", exchangeCol: "Exchange",
@@ -40,14 +41,15 @@ const words = {
     usdMode: "Dollar mode", usdHint: "All amounts are set and shown in dollars.", save: "Save", reset: "Reset",
     showChart: "Show the chart", showChartHint: "The pair's candles with the big orders' levels.", hideLevels: "Hide levels", hideLevelsHint: "Do not draw the big orders on the chart.",
     levelDepth: "Levels depth", levelDepthHint: "How far from the price levels are drawn.", reverse: "Reverse colours", reverseHint: "Swap the colours of support and resistance levels.",
-    config: (cfg) => `Depth ${cfg.depth}% · orders from ${cfg.min} · big from ${cfg.big} · trades from ${cfg.minTrade} · step ${cfg.step}`,
+    config: (cfg) => `Depth ${cfg.depth} · orders from ${cfg.min} · big from ${cfg.big} · trades from ${cfg.minTrade} · step ${cfg.step}`,
     reach: (down, up, full) => `The exchange's book: −${down}% / +${up}% of the price${full ? " · full depth from its stream" : ""}`,
-    pickMore: "Pick up to 4 exchanges", pct: "%", pcs: "pcs" },
+    pickMore: "Pick up to 4 exchanges", pct: "%", pcs: "pcs", rawStep: "the exchange's prices", max: "MAX",
+    through: (amount) => `Everything from the price through this level: ${amount}` },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const TFS = ["1m", "5m", "15m", "1h", "4h", "1d"];
-const DEFAULTS = { mode: "single", ex: "binance", exs: ["binance", "okx", "coinbase"], base: "ETH", quote: "U" + "SDT", depth: 90, minOrder: null, bigOrder: null,
+const DEFAULTS = { mode: "single", ex: "binance", exs: ["binance", "okx", "coinbase"], base: "ETH", quote: "U" + "SDT", depth: 100, minOrder: null, bigOrder: null,
   usd: false, tradesCount: 100, minTrade: null, bigTrade: null, step: null, amountDigits: null, priceDigits: null, tf: "1h", chart: true, hideLevels: false,
   levelDepth: 20, reverse: false, trades: true };
 const KEY = "nir-book-settings";
@@ -59,17 +61,9 @@ const books = new Map(); // exchange → { at, data } or { failed }
 let trades = []; // newest first, with their exchange
 let candles = [];
 
-// --- Numbers: the step the book is shown in, the thresholds (automatic from the book when not set), the formats.
+// --- Numbers. The book shows the exchange's own price levels, as the order-book tools do; a price step
+// set in the settings gathers them instead. Thresholds left empty follow the book; the formats.
 const niceStep = (raw) => { const power = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((step) => step >= raw * 0.999); };
-// The step follows how far the book reaches within the depth: a short book (a few hundred levels near the
-// price) shows its own prices, a full one gathers into round steps.
-function stepOf(data) {
-  if (cfg.step) return cfg.step;
-  const range = data.price * cfg.depth / 100;
-  const far = (list) => list.map(([price]) => Math.abs(price - data.price)).filter((distance) => distance <= range);
-  const span = Math.max(data.step, ...far(data.bids), ...far(data.asks));
-  return Math.max(data.step, niceStep(span / 300));
-}
 // A level's size in the unit the settings use: coins, or dollars in dollar mode.
 const sizeOf = (price, amount) => (cfg.usd ? price * amount : amount);
 function regroup(levels, step, down) {
@@ -89,26 +83,33 @@ function thresholds(view) {
   const min = cfg.minOrder ?? roundDown(nth(40));
   return { min, big: cfg.bigOrder ?? Math.max(min * 2, roundDown(nth(8))) };
 }
+// Decimals of the exchange's prices (its tick), read off the levels; a set step or setting wins.
+const decimalsOf = (value) => { const text = String(value); return text.includes("e-") ? Number(text.split("e-")[1]) : (text.split(".")[1] ?? "").length; };
 const digitsFor = (step) => Math.max(0, Math.min(8, -Math.floor(Math.log10(step) + 1e-9)));
-const priceText = (value, step) => value.toLocaleString(locale(), { minimumFractionDigits: cfg.priceDigits ?? digitsFor(step), maximumFractionDigits: cfg.priceDigits ?? digitsFor(step) });
+const priceText = (value, digits) => value.toLocaleString(locale(), { minimumFractionDigits: cfg.priceDigits ?? digits, maximumFractionDigits: cfg.priceDigits ?? digits });
 const amountText = (value) => {
   const digits = cfg.amountDigits ?? (Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 1 ? 2 : 4);
   return value.toLocaleString(locale(), { maximumFractionDigits: digits, minimumFractionDigits: cfg.amountDigits ?? 0 });
 };
 const unitText = (value, base) => (cfg.usd ? usdShort(value) : `${amountText(value)} ${base.toLowerCase()}`);
 
-// A book as shown: gathered into the step, within the depth, the totals there, the levels of at least the smallest order.
+// A book as shown: within the depth, its totals there (every order, the small ones too), the levels of at
+// least the smallest order, each with the volume from the price through it.
 function view(data) {
-  const step = stepOf(data);
   const range = cfg.depth / 100;
-  const near = (price) => Math.abs(price - data.price) / data.price <= range;
-  const bids = regroup(data.bids, step, true).filter(([price]) => near(price));
-  const asks = regroup(data.asks, step, false).filter(([price]) => near(price));
-  const sum = (list) => list.reduce((all, [price, amount]) => ({ coin: all.coin + amount, usd: all.usd + price * amount }), { coin: 0, usd: 0 });
-  const all = { bids, asks };
-  const limits = thresholds(all);
-  const keep = (list) => list.filter(([price, amount]) => sizeOf(price, amount) >= limits.min).slice(0, 60);
-  return { step, price: data.price, totals: { bids: sum(bids), asks: sum(asks) }, bids: keep(bids), asks: keep(asks), limits };
+  const near = ([price]) => Math.abs(price - data.price) / data.price <= range;
+  let bids = data.bids.filter(near);
+  let asks = data.asks.filter(near);
+  if (cfg.step) {
+    bids = regroup(bids, cfg.step, true);
+    asks = regroup(asks, cfg.step, false);
+  }
+  const digits = cfg.step ? digitsFor(cfg.step) : Math.min(8, Math.max(0, ...[...bids, ...asks].slice(0, 60).map(([price]) => decimalsOf(price))));
+  const within = (list) => { const row = list?.[Math.min(100, Math.max(1, Math.round(cfg.depth))) - 1]; return { coin: row?.[0] ?? 0, usd: row?.[1] ?? 0 }; };
+  const limits = thresholds({ bids, asks });
+  const keep = (list) => list.filter(([price, amount]) => sizeOf(price, amount) >= limits.min).slice(0, 400);
+  return { digits, step: cfg.step ?? 10 ** -digits, price: data.price, totals: { bids: within(data.totals?.bids), asks: within(data.totals?.asks) },
+    bids: keep(bids), asks: keep(asks), limits };
 }
 
 // --- Drawing.
@@ -146,8 +147,8 @@ function renderConfig() {
   const first = [...books.values()].find((item) => item.data)?.data;
   if (!first) { $("#config").textContent = ""; return; }
   const shown = view(first);
-  $("#config").textContent = t().config({ depth: cfg.depth, min: unitText(shown.limits.min, cfg.base), big: unitText(shown.limits.big, cfg.base),
-    minTrade: unitText(tradeLimits().min, cfg.base), step: priceText(shown.step, shown.step) });
+  $("#config").textContent = t().config({ depth: cfg.depth >= 100 ? t().max : `${cfg.depth}%`, min: unitText(shown.limits.min, cfg.base), big: unitText(shown.limits.big, cfg.base),
+    minTrade: unitText(tradeLimits().min, cfg.base), step: cfg.step ? priceText(cfg.step, shown.digits) : t().rawStep });
   // How far the exchange's book reaches: the open answers of some stop a few per cent from the price.
   const low = first.bids.at(-1)?.[0];
   const high = first.asks.at(-1)?.[0];
@@ -172,11 +173,13 @@ function sideTable(kind, shown, base) {
   body.append(sum);
   const biggest = Math.max(1e-12, ...list.map(([price, amount]) => sizeOf(price, amount)));
   if (!list.length) { const row = node("tr"); const cell = node("td", "muted ex-empty", t().none); cell.colSpan = 2; row.append(cell); body.append(row); }
-  for (const [price, amount] of list) {
+  for (const [price, amount, through] of list) {
     const size = sizeOf(price, amount);
     const row = node("tr", size >= shown.limits.big ? "big" : "");
+    // On a pointer: every order from the price through this level, the small ones too.
+    if (through) row.title = t().through(`${amountText(through)} ${base.toLowerCase()}`);
     row.style.setProperty("--fill", `${Math.round((size / biggest) * 100)}%`);
-    row.append(node("td", "left", priceText(price, shown.step)), node("td", "", cfg.usd ? usdShort(size) : amountText(amount)));
+    row.append(node("td", "left", priceText(price, shown.digits)), node("td", "", cfg.usd ? usdShort(size) : amountText(amount)));
     body.append(row);
   }
   table.append(head, body);
@@ -224,7 +227,7 @@ function renderBooks() {
     const panel = node("section", "bk-book");
     if (cfg.mode === "multi") {
       const title = node("h3", "bk-book-title", `${exchanges.find((item) => item.id === id)?.name ?? id} `);
-      title.append(node("b", "", `(${priceText(data.price, shown.step)})`));
+      title.append(node("b", "", `(${priceText(data.price, shown.digits)})`));
       panel.append(title);
     }
     const sides = node("div", "bk-sides");
@@ -351,11 +354,22 @@ function openDrawer(kind) {
     return wrap;
   };
   const unit = () => (draft.usd ? "$" : cfg.base.toLowerCase());
+  // The depth as the order-book tools offer it: 5 to 60 % in fives, 90 %, or all of it.
+  const depthField = () => {
+    const wrap = node("label", "bk-input");
+    const select = node("select", "bk-select");
+    for (const value of [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 90, 100]) {
+      select.append(Object.assign(node("option", "", value === 100 ? words.max : `${value} %`), { value, selected: Number(draft.depth) === value }));
+    }
+    select.addEventListener("change", () => { draft.depth = Number(select.value); });
+    wrap.append(node("small", "muted", words.depth), select);
+    return wrap;
+  };
   const grid = (...items) => { const box = node("div", "bk-grid"); box.append(...items); return box; };
   const heading = (text) => node("h4", "bk-head", text);
   if (kind === "book") {
     body.replaceChildren(heading(words.bookHead),
-      grid(field(words.depth, "depth", words.pct, { min: 1, placeholder: "10" }), field(words.minOrder, "minOrder", unit()), field(words.bigOrder, "bigOrder", unit())),
+      grid(depthField(), field(words.minOrder, "minOrder", unit()), field(words.bigOrder, "bigOrder", unit())),
       heading(words.tradesHead),
       grid(field(words.tradesCount, "tradesCount", words.pcs, { min: 10, step: 10, placeholder: "100" }), field(words.minTrade, "minTrade", unit()), field(words.bigTrade, "bigTrade", unit())),
       heading(words.more),
