@@ -479,3 +479,34 @@ test("the order book screener gathers a book into price steps and reads each exc
   assert.equal((await call("/market/book?ex=coinbase&base=ETH")).status, 404, "an empty book is no market");
   assert.equal((await call("/market/book/exchanges")).data.exchanges.length, 11);
 });
+
+test("Binance's book is kept in full depth from its stream of changes on top of a snapshot", async () => {
+  const { createDeep, layered } = await import("../blockchain/market-book.mjs");
+  let snapshotId = 100;
+  const sockets = [];
+  const asked = [];
+  const deep = createDeep({ get: async (url) => { asked.push(url); return { lastUpdateId: snapshotId, bids: [["100", "1"], ["99", "2"]], asks: [["101", "1"], ["102", "3"]] }; },
+    socket: () => { const ws = { close() {} }; sockets.push(ws); return ws; }, wait: async () => {}, now: () => 0 });
+  deep.open("binance", "ETHX", "https://snapshot");
+  assert.equal(deep.read("binance", "ETHX"), null, "nothing until the stream and the snapshot meet");
+  const ws = sockets[0];
+  ws.onmessage({ data: JSON.stringify({ U: 95, u: 99, b: [["50", "9"]], a: [] }) }); // before the snapshot: buffered, then dropped as old
+  ws.onopen();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  ws.onmessage({ data: JSON.stringify({ U: 100, u: 101, b: [["60", "40"], ["99", "0"]], a: [["300", "7"]] }) });
+  ws.onmessage({ data: JSON.stringify({ U: 102, u: 102, b: [], a: [["101", "5"]] }) });
+  const book = deep.read("binance", "ETHX");
+  assert.deepEqual(book.bids.sort((left, right) => right[0] - left[0]), [[100, 1], [60, 40]], "a far level joins from the stream; an emptied one leaves");
+  assert.deepEqual(book.asks.sort((left, right) => left[0] - right[0]), [[101, 5], [102, 3], [300, 7]]);
+  // A gap in the stream: the book is read again, and the far levels beyond the snapshot's reach stay.
+  snapshotId = 200;
+  ws.onmessage({ data: JSON.stringify({ U: 150, u: 151, b: [], a: [] }) });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  ws.onmessage({ data: JSON.stringify({ U: 201, u: 201, b: [], a: [] }) });
+  const again = deep.read("binance", "ETHX");
+  assert.ok(again.bids.some(([price]) => price === 60) && again.asks.some(([price]) => price === 300));
+  assert.equal(asked.length, 2);
+  // Bitfinex at several precisions: each coarser layer adds only what lies beyond the finer one.
+  assert.deepEqual(layered([{ bids: [[100, 1], [99, 1]], asks: [[101, 1]] }, { bids: [[100, 5], [90, 2]], asks: [[101, 9], [120, 3]] }]),
+    { bids: [[100, 1], [99, 1], [90, 2]], asks: [[101, 1], [120, 3]] });
+});

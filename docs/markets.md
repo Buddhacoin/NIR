@@ -366,7 +366,14 @@ futures (Binance, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
 Bitfinex, HitBTC), or several side by side in the constructor. `GET
 /market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
 most every two seconds whoever asks and sends it gathered into steps of about
-1/2000 of the price within 60 % of it; `/market/book/trades` and
+1/2000 of the price within 90 % of it. Depth: Coinbase, Bitstamp and HitBTC
+answer with their whole book; Bitfinex is read at three precisions (exact near
+the price, coarser further out); Binance (spot and futures) is kept in full
+depth by the server from the exchange's stream of every change on top of a
+snapshot, re-read every ten minutes and on any gap, for the pairs looked at in
+the last half hour and the six busiest from the start; OKX, Kraken and Bybit
+give what their open answers hold (a few per cent around the price). The page
+says how far each book reaches. `/market/book/trades` and
 `/market/book/candles?tf=1m…1d` read the latest trades and candles the same
 way (candles every twenty seconds); exchanges that quote dollars answer for
 the stablecoin. The page gathers the book into a coarser step, keeps the

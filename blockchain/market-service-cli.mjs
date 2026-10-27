@@ -13,7 +13,7 @@ import { createScreener } from "./market-screener.mjs";
 import { createLedger } from "./market-ledger.mjs";
 import { createBehaviour } from "./market-behaviour.mjs";
 import { createDensities } from "./market-densities.mjs";
-import { createBook } from "./market-book.mjs";
+import { createBook, createDeep } from "./market-book.mjs";
 import { createPatoshi } from "./market-patoshi.mjs";
 import { createLiquidations } from "./market-liquidations.mjs";
 import { createLogos } from "./market-logos.mjs";
@@ -65,7 +65,8 @@ const screener = fixture ? null : createScreener({ get: fetchExplorer, coinOf: (
   read: (path) => readFileSync(path, "utf8"), write: (path, text) => writeFileSync(path, text) });
 // The density screener reads the exchanges' futures order books, the screener's busiest coins first.
 // The order book screener reads a pair's book, trades and candles when a visitor asks (shared, two seconds).
-const book = fixture ? null : createBook({ get: fetchExplorer });
+// Binance's books in full depth come from its stream of changes, kept for the pairs being looked at.
+const book = fixture ? null : createBook({ get: fetchExplorer, deep: createDeep({ get: fetchExplorer }) });
 const densities = fixture ? null : createDensities({ get: fetchExplorer, coinOf: (symbol) => chain.coinOfSymbol(symbol),
   coins: () => screener?.snapshot().rows ?? [] });
 // Liquidations on Binance, Bybit and OKX, kept a day (liquidations.json beside the accounts).
@@ -87,6 +88,7 @@ service.start();
 chain.warm();
 screener?.start();
 densities?.start();
+book?.start();
 liquidations?.start();
 chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time

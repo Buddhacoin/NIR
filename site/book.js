@@ -29,6 +29,7 @@ const words = {
     showChart: "Показывать график", showChartHint: "Свечи пары с уровнями крупных ордеров.", hideLevels: "Скрыть уровни", hideLevelsHint: "Не рисовать крупные ордера на графике.",
     levelDepth: "Глубина показа уровней", levelDepthHint: "Насколько далеко от цены рисовать уровни.", reverse: "Реверсия цветов", reverseHint: "Поменять местами цвета уровней поддержки и сопротивления.",
     config: (cfg) => `Глубина ${cfg.depth}% · ордер от ${cfg.min} · крупный от ${cfg.big} · сделка от ${cfg.minTrade} · шаг ${cfg.step}`,
+    reach: (down, up, full) => `Стакан биржи: −${down}% / +${up}% от цены${full ? " · полная глубина из потока" : ""}`,
     pickMore: "Выберите до 4 бирж", pct: "%", pcs: "шт." },
   en: { modes: { single: "Single", multi: "Constructor" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", time: "Time", type: "Type",
     buy: "BUY", sell: "SELL", loading: "Loading the book…", failed: (name) => `${name}: no such pair, or the exchange did not answer`, none: "No levels above the smallest order within the depth.",
@@ -40,12 +41,13 @@ const words = {
     showChart: "Show the chart", showChartHint: "The pair's candles with the big orders' levels.", hideLevels: "Hide levels", hideLevelsHint: "Do not draw the big orders on the chart.",
     levelDepth: "Levels depth", levelDepthHint: "How far from the price levels are drawn.", reverse: "Reverse colours", reverseHint: "Swap the colours of support and resistance levels.",
     config: (cfg) => `Depth ${cfg.depth}% · orders from ${cfg.min} · big from ${cfg.big} · trades from ${cfg.minTrade} · step ${cfg.step}`,
+    reach: (down, up, full) => `The exchange's book: −${down}% / +${up}% of the price${full ? " · full depth from its stream" : ""}`,
     pickMore: "Pick up to 4 exchanges", pct: "%", pcs: "pcs" },
 };
 const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const TFS = ["1m", "5m", "15m", "1h", "4h", "1d"];
-const DEFAULTS = { mode: "single", ex: "binance", exs: ["binance", "okx", "coinbase"], base: "ETH", quote: "U" + "SDT", depth: 10, minOrder: null, bigOrder: null,
+const DEFAULTS = { mode: "single", ex: "binance", exs: ["binance", "okx", "coinbase"], base: "ETH", quote: "U" + "SDT", depth: 90, minOrder: null, bigOrder: null,
   usd: false, tradesCount: 100, minTrade: null, bigTrade: null, step: null, amountDigits: null, priceDigits: null, tf: "1h", chart: true, hideLevels: false,
   levelDepth: 20, reverse: false, trades: true };
 const KEY = "nir-book-settings";
@@ -138,6 +140,13 @@ function renderConfig() {
   const shown = view(first);
   $("#config").textContent = t().config({ depth: cfg.depth, min: unitText(shown.limits.min, cfg.base), big: unitText(shown.limits.big, cfg.base),
     minTrade: unitText(tradeLimits().min, cfg.base), step: priceText(shown.step, shown.step) });
+  // How far the exchange's book reaches: the open answers of some stop a few per cent from the price.
+  const low = first.bids.at(-1)?.[0];
+  const high = first.asks.at(-1)?.[0];
+  if (low && high) {
+    const pct = (value) => Math.round(Math.abs(value - first.price) / first.price * 100);
+    $("#config").append(node("br"), t().reach(pct(low), pct(high), first.full));
+  }
 }
 function sideTable(kind, shown, base) {
   const list = kind === "bid" ? shown.bids : shown.asks;

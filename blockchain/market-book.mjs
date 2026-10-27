@@ -72,10 +72,15 @@ export const BOOK_EXCHANGES = {
     candles: (pair, tf) => `https://www.bitstamp.net/api/v2/ohlc/${pair}/?step=${{ "1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 }[tf]}&limit=500`,
     readCandles: (answer) => (answer?.data?.ohlc ?? []).map((row) => [num(row.timestamp), row.open, row.high, row.low, row.close, row.volume]) },
   bitfinex: { name: "Bitfinex", quotes: ["USD", "BTC"], pair: (base, quote) => `t${base}${base.length > 3 ? ":" : ""}${quote}`,
-    book: (pair) => `https://api-pub.bitfinex.com/v2/book/${pair}/P0?len=250`,
+    book: (pair, precision = "P0") => `https://api-pub.bitfinex.com/v2/book/${pair}/${precision}?len=250`,
     readBook: (answer) => {
       const rows = Array.isArray(answer) ? answer : [];
       return { bids: rows.filter((row) => row[2] > 0).map((row) => [row[0], row[2]]), asks: rows.filter((row) => row[2] < 0).map((row) => [row[0], -row[2]]) };
+    },
+    // 250 levels a side at each precision: the exact ones near the price, coarser ones further out (to ±90 % or so).
+    loadBook: async (get, pair, exchange) => {
+      const [near, middle, far] = (await Promise.all(["P0", "P1", "P2"].map((precision) => get(exchange.book(pair, precision)).catch(() => null)))).map((answer) => exchange.readBook(answer));
+      return layered([near, middle, far]);
     },
     trades: (pair) => `https://api-pub.bitfinex.com/v2/trades/${pair}/hist?limit=500`,
     readTrades: (answer) => (Array.isArray(answer) ? answer : []).map((row) => ({ time: row[1], price: row[3], amount: Math.abs(row[2]), side: row[2] < 0 ? "sell" : "buy" })),
@@ -88,6 +93,21 @@ export const BOOK_EXCHANGES = {
     candles: (pair, tf) => `https://api.hitbtc.com/api/3/public/candles/${pair}?period=${{ "1m": "M1", "5m": "M5", "15m": "M15", "1h": "H1", "4h": "H4", "1d": "D1" }[tf]}&limit=500`,
     readCandles: (answer) => (Array.isArray(answer) ? answer : []).map((row) => [Date.parse(row.timestamp) / 1000, row.open, row.max, row.min, row.close, row.volume]).reverse() },
 };
+// Books read at several precisions: each layer adds the levels beyond the finer one's reach.
+export function layered(layers) {
+  const out = { bids: [], asks: [] };
+  for (const side of ["bids", "asks"]) {
+    let reach = null; // the furthest price the finer layers cover
+    for (const layer of layers) {
+      const list = layer?.[side] ?? [];
+      if (!list.length) continue;
+      out[side].push(...(reach === null ? list : list.filter(([price]) => (side === "bids" ? price < reach : price > reach))));
+      const edge = side === "bids" ? Math.min(...list.map(([price]) => price)) : Math.max(...list.map(([price]) => price));
+      reach = reach === null ? edge : side === "bids" ? Math.min(reach, edge) : Math.max(reach, edge);
+    }
+  }
+  return out;
+}
 function bybitTf(tf) { return { "1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": "D" }[tf]; }
 function bybitTrades(answer) {
   return (answer?.result?.list ?? []).map((item) => ({ time: num(item.time), price: num(item.price), amount: num(item.size), side: item.side === "Sell" ? "sell" : "buy" }));
@@ -105,9 +125,9 @@ export function niceStep(raw) {
   const power = 10 ** Math.floor(Math.log10(raw));
   return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((step) => step >= raw * 0.999);
 }
-// The book gathered into steps of about 1/2000 of the price, within `range` (a share of the price) of it:
+// The book gathered into steps of about 1/2000 of the price, within `range` (a share of the price, 90 %) of it:
 // bids rounded down, asks rounded up, as the order-book tools show them. Best price first.
-export function gatherBook({ bids, asks }, range = 0.6, buckets = 2000) {
+export function gatherBook({ bids, asks }, range = 0.9, buckets = 2000) {
   const best = Math.max(0, ...bids.map(([price]) => price));
   const ask = Math.min(...asks.map(([price]) => price));
   const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
@@ -127,7 +147,124 @@ export function gatherBook({ bids, asks }, range = 0.6, buckets = 2000) {
   return { price: Number(price.toPrecision(10)), step, bids: side(bids, true), asks: side(asks, false) };
 }
 
-export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 20_000 } = {}) {
+// Binance's books in full depth, as the order-book tools keep them: its open REST answer stops at 5,000
+// levels (1,000 on futures), so for a pair someone looks at the server keeps the exchange's stream of
+// every change to the book, on top of a snapshot (the exchange's documented way: buffer the stream, read
+// the snapshot, drop what it already holds, then apply each change in order). Levels far from the price
+// join as soon as they change; a fresh snapshot every ten minutes corrects the near part. A pair nobody
+// has looked at for half an hour is let go; the busiest few are kept from the start.
+const STREAMS = {
+  binance: { socket: (pair) => `wss://stream.binance.com:9443/ws/${pair.toLowerCase()}@depth@100ms`, futures: false },
+  "binance-f": { socket: (pair) => `wss://fstream.binance.com/ws/${pair.toLowerCase()}@depth@100ms`, futures: true },
+};
+export const WARM = ["BTC", "ETH", "SOL", "XRP", "BNB", "DOGE"];
+export function createDeep({ get, now = Date.now, socket = (url) => new WebSocket(url), keep = 30 * 60_000, refresh = 10 * 60_000,
+  wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }) } = {}) {
+  const books = new Map(); // "ex:pair" → { bids: Map, asks: Map, last, ready, seenAt, ws, buffer, warm }
+  const apply = (book, side, list) => {
+    for (const [price, amount] of list ?? []) {
+      const level = Number(price);
+      const size = Number(amount);
+      if (!Number.isFinite(level) || !Number.isFinite(size)) continue;
+      if (size === 0) book[side].delete(level); else book[side].set(level, size);
+    }
+  };
+  // A snapshot replaces the levels within its own reach; the stream's far levels beyond it stay.
+  function snapshot(book, answer) {
+    for (const [side, list] of [["bids", answer.bids], ["asks", answer.asks]]) {
+      const prices = (list ?? []).map(([price]) => Number(price));
+      if (!prices.length) continue;
+      const low = Math.min(...prices);
+      const high = Math.max(...prices);
+      for (const level of book[side].keys()) if (level >= low && level <= high) book[side].delete(level);
+      apply(book, side, list);
+    }
+    book.last = answer.lastUpdateId;
+  }
+  // One change from the stream, in order; a gap means the book has to be read again.
+  function change(book, event, futures) {
+    if (book.last === null) { book.buffer.push(event); if (book.buffer.length > 5_000) book.buffer.shift(); return; }
+    if (event.u <= book.last) return;
+    if (!book.ready) {
+      if (event.U > book.last + 1 && !(futures && event.U <= book.last)) { void resync(book); return; }
+      book.ready = true;
+    } else if (futures ? event.pu !== book.last : event.U !== book.last + 1) { void resync(book); return; }
+    apply(book, "bids", event.b);
+    apply(book, "asks", event.a);
+    book.last = event.u;
+  }
+  async function resync(book) {
+    if (book.syncing) return;
+    book.syncing = true;
+    book.ready = false;
+    book.last = null;
+    try {
+      const answer = await get(book.snapshotUrl);
+      if (!answer?.lastUpdateId) throw new Error("no snapshot");
+      snapshot(book, answer);
+      book.syncedAt = now();
+      const buffered = book.buffer;
+      book.buffer = [];
+      for (const event of buffered) change(book, event, book.futures);
+    } catch {
+      book.last = null;
+      await wait(5_000);
+      book.syncing = false;
+      if (book.open) return resync(book);
+      return undefined;
+    }
+    book.syncing = false;
+    return undefined;
+  }
+  function open(ex, pair, snapshotUrl, warm = false) {
+    const key = `${ex}:${pair}`;
+    let book = books.get(key);
+    if (book) { book.seenAt = now(); return book; }
+    book = { ex, pair, key, bids: new Map(), asks: new Map(), last: null, ready: false, buffer: [], seenAt: now(), warm, open: true,
+      futures: STREAMS[ex].futures, snapshotUrl, syncedAt: 0 };
+    books.set(key, book);
+    const connect = () => {
+      if (!book.open) return;
+      let ws;
+      try { ws = socket(STREAMS[ex].socket(pair)); } catch { setTimeout(connect, 15_000).unref?.(); return; }
+      book.ws = ws;
+      ws.onopen = () => { void resync(book); };
+      ws.onmessage = (event) => { try { change(book, JSON.parse(event.data), book.futures); } catch {} };
+      ws.onclose = ws.onerror = () => {
+        try { ws.close(); } catch {}
+        if (book.ws !== ws) return;
+        book.ws = null;
+        book.ready = false;
+        book.last = null;
+        if (book.open) setTimeout(connect, 15_000).unref?.();
+      };
+    };
+    connect();
+    return book;
+  }
+  function close(book) {
+    book.open = false;
+    try { book.ws?.close(); } catch {}
+    books.delete(book.key);
+  }
+  // Housekeeping once a minute: let go of books nobody looks at, read the near part afresh now and then.
+  function tick() {
+    for (const book of [...books.values()]) {
+      if (!book.warm && now() - book.seenAt > keep) { close(book); continue; }
+      if (book.ready && now() - book.syncedAt > refresh) void resync(book);
+    }
+  }
+  // The book as plain lists, once it is in step with the stream; null until then.
+  function read(ex, pair) {
+    const book = books.get(`${ex}:${pair}`);
+    if (!book?.ready) return null;
+    book.seenAt = now();
+    return { bids: [...book.bids], asks: [...book.asks], levels: book.bids.size + book.asks.size };
+  }
+  return { open, read, tick, close, books, change, snapshot };
+}
+
+export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 20_000, deep = null } = {}) {
   const cache = new Map(); // key → { at, value } or { job }
   let okxSizes = null;
   async function sizeOf(base) {
@@ -164,7 +301,13 @@ export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 2
     return cached(`book:${ex}:${pair}`, bookTtl, async () => {
       const size = exchange.sized ? await sizeOf(base) : 1;
       if (!size) throw Object.assign(new Error("no such market"), { status: 404 });
-      const read = exchange.readBook(await get(exchange.book(pair)), size);
+      // Binance in full depth from its stream once it is running (the REST answer meanwhile).
+      if (deep && STREAMS[ex]) {
+        deep.open(ex, pair, exchange.book(pair));
+        const kept = deep.read(ex, pair);
+        if (kept && (kept.bids.length || kept.asks.length)) return { ex, base, quote, pair, ...gatherBook(kept), full: true, at: now() };
+      }
+      const read = exchange.loadBook ? await exchange.loadBook(get, pair, exchange) : exchange.readBook(await get(exchange.book(pair)), size);
       if (!read.bids.length && !read.asks.length) throw Object.assign(new Error("no such market"), { status: 404 });
       return { ex, base, quote, pair, ...gatherBook(read), at: now() };
     });
@@ -210,5 +353,19 @@ export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 2
     }
     return reply(404, { error: "not found" });
   }
-  return { handle, book, trades, candles };
+  // The busiest pairs' Binance books are kept from the start, so their full depth is there at once.
+  function start() {
+    if (!deep) return () => {};
+    for (const base of WARM) {
+      for (const ex of Object.keys(STREAMS)) {
+        const exchange = BOOK_EXCHANGES[ex];
+        const pair = exchange.pair(base, STABLE);
+        deep.open(ex, pair, exchange.book(pair), true);
+      }
+    }
+    const timer = setInterval(() => deep.tick(), 60_000);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  }
+  return { handle, book, trades, candles, start };
 }
