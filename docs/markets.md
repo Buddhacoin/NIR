@@ -484,6 +484,19 @@ explorer requests a minute.
 | GET | `/market/labels/pending` | the queue, for moderators |
 | POST | `/market/labels/<id>/approve`, `/market/labels/<id>/reject` | a moderator's decision |
 
+
+**Visualizer** (`/visualizer/?address=…`, the "◉ Links" button on a wallet's
+page, `site/visualizer.js`): the wallet in the middle and the wallets it
+exchanged coins with around it, as bubbles with the open name's logo or the
+short address. A green line means coins came to the wallet, red that they
+left it; the thicker the line, the more dollars. Filters: how many links (25,
+50, 100), by sum or by time, the smallest sum and the network. Bubbles can be
+dragged, the picture panned and zoomed (with two fingers on a phone); a
+bubble's card shows what passed between the two wallets and can expand that
+wallet's own links in place, open its page or make it the centre. It reads
+the same transfer pages as the wallet's page, so it needs nothing new on the
+server.
+
 ## A coin's page
 
 Every coin has its own page at `/coin/<id>` (the CoinGecko id, e.g.
