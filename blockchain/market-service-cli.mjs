@@ -88,7 +88,7 @@ service.start();
 chain.warm();
 screener?.start();
 densities?.start();
-book?.start();
+book?.start(() => (screener?.snapshot().rows ?? []).map((row) => row.symbol));
 liquidations?.start();
 chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time

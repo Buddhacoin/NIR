@@ -371,7 +371,7 @@ answer with their whole book; Bitfinex is read at three precisions (exact near
 the price, coarser further out); Binance (spot and futures) is kept in full
 depth by the server from the exchange's stream of every change on top of a
 snapshot, re-read every ten minutes and on any gap, for the pairs looked at in
-the last half hour and the six busiest from the start; OKX, Kraken and Bybit
+the last half hour and the trend screener's six busiest all the time; OKX, Kraken and Bybit
 give what their open answers hold (a few per cent around the price). The page
 says how far each book reaches. `/market/book/trades` and
 `/market/book/candles?tf=1m…1d` read the latest trades and candles the same

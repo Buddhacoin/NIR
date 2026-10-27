@@ -157,7 +157,6 @@ const STREAMS = {
   binance: { socket: (pair) => `wss://stream.binance.com:9443/ws/${pair.toLowerCase()}@depth@100ms`, futures: false },
   "binance-f": { socket: (pair) => `wss://fstream.binance.com/ws/${pair.toLowerCase()}@depth@100ms`, futures: true },
 };
-export const WARM = ["BTC", "ETH", "SOL", "XRP", "BNB", "DOGE"];
 export function createDeep({ get, now = Date.now, socket = (url) => new WebSocket(url), keep = 30 * 60_000, refresh = 10 * 60_000,
   wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }) } = {}) {
   const books = new Map(); // "ex:pair" → { bids: Map, asks: Map, last, ready, seenAt, ws, buffer, warm }
@@ -353,17 +352,20 @@ export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 2
     }
     return reply(404, { error: "not found" });
   }
-  // The busiest pairs' Binance books are kept from the start, so their full depth is there at once.
-  function start() {
+  // The busiest pairs' Binance books (`busiest()`: the trend screener's first coins) are kept all the time,
+  // so their full depth is there at once.
+  function start(busiest = () => []) {
     if (!deep) return () => {};
-    for (const base of WARM) {
-      for (const ex of Object.keys(STREAMS)) {
-        const exchange = BOOK_EXCHANGES[ex];
-        const pair = exchange.pair(base, STABLE);
-        deep.open(ex, pair, exchange.book(pair), true);
+    const warm = () => {
+      for (const base of busiest().filter((symbol) => SYMBOL.test(symbol)).slice(0, 6)) {
+        for (const ex of Object.keys(STREAMS)) {
+          const exchange = BOOK_EXCHANGES[ex];
+          const pair = exchange.pair(base, STABLE);
+          deep.open(ex, pair, exchange.book(pair), true);
+        }
       }
-    }
-    const timer = setInterval(() => deep.tick(), 60_000);
+    };
+    const timer = setInterval(() => { warm(); deep.tick(); }, 60_000);
     timer.unref?.();
     return () => clearInterval(timer);
   }
