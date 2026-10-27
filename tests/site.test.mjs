@@ -206,3 +206,12 @@ test("the liquidations and listings pages have English for every text and read t
     assert.match(read(page), /href="\/screener\/listings\/"/);
   }
 });
+
+test("the heatmap page has English for every text, and every screener links to it", () => {
+  const html = read("site/screener/heatmap/index.html");
+  const code = read("site/heatmap.js");
+  for (const [, key] of html.matchAll(/data-i18n="([^"]+)"/g)) assert.match(code, new RegExp(`\\b${key}:`), `heatmap.js: no English text for ${key}`);
+  for (const page of ["site/screener/index.html", "site/screener/densities/index.html", "site/screener/arbitrage/index.html", "site/screener/liquidations/index.html", "site/screener/listings/index.html"]) {
+    assert.match(read(page), /href="\/screener\/heatmap\/"/);
+  }
+});

@@ -8,7 +8,7 @@ const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
-  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", title: "Arbitrage screener", colCoin: "Coin", colBuy: "Buy",
+  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap", title: "Arbitrage screener", colCoin: "Coin", colBuy: "Buy",
   colSell: "Sell", colSpread: "Spread", colFunding: "Funding gap", colVolume: "24h volume", colMarkets: "Exchanges",
   source: "Data: the open futures markets of Binance, Bybit, OKX, Bitget, Gate and MEXC, updated every minute. The spread is how much higher the price is on the dearest exchange than on the cheapest; the volume is the smaller of the two. A coin under the same ticker but priced more than 5% away counts as another coin and is not compared. Mind the fees, the transfer between exchanges and the funding: this is not financial advice.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",

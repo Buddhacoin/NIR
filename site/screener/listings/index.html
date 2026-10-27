@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=58">
+  <link rel="stylesheet" href="/markets.css?v=61">
 </head>
 <body>
   <div class="nirbar">
@@ -49,7 +49,7 @@
 
   <main class="wrap explorer">
     <article class="card ex-card screener">
-      <nav class="sc-tabs"><a href="/screener/" data-i18n="tabTrends">Тренды</a><a href="/screener/densities/" data-i18n="tabDensities">Плотности</a><a href="/screener/arbitrage/" data-i18n="tabArbitrage">Арбитраж</a><a href="/screener/liquidations/" data-i18n="tabLiquidations">Ликвидации</a><a class="on" href="/screener/listings/" data-i18n="tabListings">Листинги</a></nav>
+      <nav class="sc-tabs"><a href="/screener/" data-i18n="tabTrends">Тренды</a><a href="/screener/densities/" data-i18n="tabDensities">Плотности</a><a href="/screener/arbitrage/" data-i18n="tabArbitrage">Арбитраж</a><a href="/screener/liquidations/" data-i18n="tabLiquidations">Ликвидации</a><a class="on" href="/screener/listings/" data-i18n="tabListings">Листинги</a><a href="/screener/heatmap/" data-i18n="tabHeatmap">Тепловая карта</a></nav>
       <div class="pf-chart-head">
         <h1 class="ex-title" data-i18n="title">Новые листинги</h1>
         <input class="ex-token" id="filter" type="search" placeholder="Монета" autocomplete="off">
@@ -82,6 +82,6 @@
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
   <script src="/common.js?v=28"></script>
-  <script src="/listings.js?v=1"></script>
+  <script src="/listings.js?v=2"></script>
 </body>
 </html>

@@ -1236,3 +1236,17 @@ html.touch { overscroll-behavior-y: contain; }
   .ls-table :is(th, td):is(:nth-child(1), :nth-child(5), :nth-child(6)) { display: none !important; }
   .lq-feed :is(th, td):nth-child(4) { display: none; }
 }
+/* The heatmap (heatmap.js): tiles placed by the treemap, coloured by the change; a tip on hover. */
+.hm { position: relative; width: 100%; min-height: 240px; overflow: hidden; border-radius: 12px; background: var(--soft); }
+.hm-empty { padding: 40px; text-align: center; }
+.hm-tile { position: absolute; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .15em;
+  overflow: hidden; border: 1px solid var(--bg); color: #fff; text-align: center; line-height: 1.1; background: #3a3f4b; text-decoration: none; }
+.hm-tile.up { background: color-mix(in srgb, #16a96b calc(var(--heat) * 100%), #2b2f36); }
+.hm-tile.down { background: color-mix(in srgb, #e0394f calc(var(--heat) * 100%), #2b2f36); }
+.hm-tile b { display: block; width: 100%; padding: 0 3px; box-sizing: border-box; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; letter-spacing: .01em; }
+.hm-tile span { font-size: .72em; font-weight: 700; opacity: .92; }
+.hm-tile:hover { outline: 2px solid #fff; outline-offset: -2px; z-index: 1; }
+.hm-logo { width: 1.5em; height: 1.5em; border-radius: 50%; background: #fff2; }
+.hm-tip { position: absolute; z-index: 5; display: grid; gap: 3px; width: 200px; box-sizing: border-box; padding: 10px 12px; border-radius: 12px;
+  background: var(--panel2); border: 1px solid var(--line); box-shadow: 0 8px 30px #0006; font-size: 13px; pointer-events: none; }
+.screener:has(.hm) { position: relative; }

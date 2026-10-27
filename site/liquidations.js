@@ -7,7 +7,7 @@ const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
-  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings",
+  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
   title: "Liquidations", byCoin: "By coin", recent: "The last hour", colCoin: "Coin", colLongs: "Longs", colShorts: "Shorts", colTotal: "Total",
   colTime: "Time", colPosition: "Position", colPrice: "Price", colSize: "Size",
   source: "Data: the open streams of forced closes on the futures of Binance, Bybit and OKX. A long is a position on a rise closed (the price fell); a short, a position on a fall (the price rose). The server keeps the last day.",
