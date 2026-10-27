@@ -360,6 +360,32 @@ needs no service of its own: it lays the top coins of the market overview
 coins (sized by day volume; 5 m to 24 h change) out as a squarified treemap,
 coloured by the change, stablecoins left out unless asked for.
 
+The order book screener (`/screener/book/`, `site/book.js`,
+`blockchain/market-book.mjs`): one pair on one of eight exchanges, spot or
+futures (Binance, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
+Bitfinex, HitBTC), or several side by side in the constructor. `GET
+/market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
+most every two seconds whoever asks and sends it gathered into steps of about
+1/2000 of the price within 90 % of it. Depth: Coinbase, Bitstamp and HitBTC
+answer with their whole book; Bitfinex is read at three precisions (exact near
+the price, coarser further out); Binance (spot and futures) is kept in full
+depth by the server from the exchange's stream of every change on top of a
+snapshot, re-read every ten minutes and on any gap, for the pairs looked at in
+the last half hour and the trend screener's six busiest all the time; OKX, Kraken and Bybit
+give what their open answers hold (a few per cent around the price). The page
+says how far each book reaches. `/market/book/trades` and
+`/market/book/candles?tf=1m…1d` read the latest trades and candles the same
+way (candles every twenty seconds); exchanges that quote dollars answer for
+the stablecoin. The page gathers the book into a coarser step, keeps the
+levels of at least the smallest order within the chosen depth, shows big
+orders in bold, sums each side within the depth, filters the trades feed by
+the smallest trade, and draws the big orders on a candle chart as levels
+(green under the price, red above; hide, depth and reversed colours in the
+chart settings). Thresholds left empty follow the book (about forty levels
+shown, the eight biggest big); a dollar mode sets and shows them in dollars.
+Settings stay in the browser. The chart is TradingView's Lightweight Charts
+(`site/vendor/lightweight-charts.js`, Apache 2.0, credited in the footer).
+
 `/screener/densities/` is the order-book density screener
 (`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit
 orders ("walls") in the perpetual futures books of Binance, Bybit, OKX and
