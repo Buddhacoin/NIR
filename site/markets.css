@@ -1172,3 +1172,5 @@ html.touch { overscroll-behavior-y: contain; }
 #track.on { border-color: var(--accent); color: var(--accent); }
 .note-bar.ok { border-color: color-mix(in srgb, var(--up) 40%, transparent); color: var(--text); }
 @media (max-width: 700px) { .viz-link.wide { gap: 0; padding: 7px; font-size: 0; } }
+/* Signed in, the bell joins the phone's header: the brand drops its second word to make room. */
+@media (max-width: 600px) { .top:has(.pill.bell) .brand small { display: none; } }

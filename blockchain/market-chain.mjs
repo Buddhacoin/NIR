@@ -254,8 +254,14 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         amount, usd: price === null ? null : amount * price }] : [] };
   }
   // A wallet seen before opens at once from its copy while a fresh one is read behind it.
-  const holdings = async (address) => reprice(await cached(`holdings:${address.toLowerCase()}`, 600_000,
-    () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true }));
+  // A copy where a network did not answer is kept half a minute only, so the next visit asks again.
+  async function holdings(address) {
+    const key = `holdings:${address.toLowerCase()}`;
+    const value = await cached(key, 600_000, () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true });
+    const hit = cache.get(key);
+    if (hit && value?.networks?.some((item) => !item.ok)) hit.at = Math.min(hit.at, now() - 600_000 + 30_000);
+    return reprice(value);
+  }
   // The UTXO network's coin is valued at today's price when answered, not when its copy was read:
   // a copy made before the prices were in would show a balance of nothing for ten minutes.
   function reprice(value) {

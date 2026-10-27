@@ -229,7 +229,7 @@ function renderChart() {
 }
 let drawPending = false;
 function scheduleChart() {
-  if (drawPending || chart !== "history") return;
+  if (drawPending || chart !== "history" || !data) return;
   drawPending = true;
   requestAnimationFrame(() => { drawPending = false; renderChart(); });
 }
@@ -406,7 +406,7 @@ function renderTransfers() {
   scheduleChart();
   // With spam hidden a page can leave the panel half empty: the next pages come until it fills (five at most).
   const box = $(".ex-transfers").closest(".table-wrap");
-  if (hasMore() && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
+  if (started && hasMore() && !loadingMore && autoPages < 5 && box.scrollHeight <= box.clientHeight + 80) { autoPages += 1; void loadTransfers(); }
 }
 let autoPages = 0;
 const filtered = () => Boolean(tfilter.from || tfilter.to || tfilter.token || tfilter.amount || tfilter.usd);
@@ -487,7 +487,9 @@ const transferChainsAll = () => (utxo ? ["btc"] : Object.keys(CHAINS).filter((ch
   && (!CHAINS[chain].node || data?.assets.some((asset) => asset.chain === chain) || activeChains().includes(chain))));
 const transferChains = () => (utxo ? ["btc"] : transferChain === "all" ? transferChainsAll() : [transferChain]);
 const hasMore = () => transferChains().some((chain) => cursors[chain] !== null);
+let started = false; // the first pages were asked for: until then a render must not ask for them too
 async function loadTransfers(reset = false) {
+  if (reset) started = true;
   if (reset) { transfers = []; cursors = {}; autoPages = 0; generation += 1; loadingMore = false; }
   if (loadingMore) return;
   loadingMore = true;
@@ -499,7 +501,8 @@ async function loadTransfers(reset = false) {
     const later = (ms) => new Promise((done) => { setTimeout(done, ms); }).then(ask);
     const answer = await ask() ?? await later(2500) ?? await later(6000);
     if (mine !== generation) return;
-    cursors[chain] = answer?.next ?? null;
+    // A page that failed keeps its place: the next scroll or reach back asks for it again.
+    if (answer) cursors[chain] = answer.next ?? null;
     if (answer) {
       transfers = [...transfers, ...answer.items];
       // Pages with no direction filter are complete: they feed the history and the counterparties.
@@ -508,7 +511,7 @@ async function loadTransfers(reset = false) {
         // A node page says how far back it read, transfers or not.
         reached[chain] = cursors[chain] === null ? 0 : Math.min(reached[chain] ?? Date.now(), answer.reached ?? Date.now(), ...answer.items.map((item) => item.time));
       }
-    } else if (direction === "all") reached[chain] = 0;
+    }
     renderTransfers();
   }));
   if (mine !== generation) return;

@@ -276,7 +276,7 @@ function walletLink(party, { bubbles = true } = {}) {
   link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
   link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
-  if (!bubbles || !/^0x[0-9a-fA-F]{40}$/.test(party.address)) return link;
+  if (!bubbles || !ADDRESS.test(party.address)) return link;
   const both = document.createDocumentFragment();
   both.append(link, bubblesLink(party.address));
   return both;
