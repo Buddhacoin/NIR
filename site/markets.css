@@ -1078,8 +1078,9 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 700px) {
   .pf-side { display: none; }
   .pf-switch { cursor: pointer; }
-  .pf-switch > .pf-icon { display: grid; width: 34px; height: 34px; border-radius: 10px; }
-  .pf-switch > .pf-icon svg { width: 19px; height: 19px; }
+  .pf-switch > .pf-icon { display: grid; width: 30px; height: 30px; border-radius: 9px; background: var(--soft); box-shadow: inset 0 0 0 1px var(--line); }
+  .pf-switch > .pf-icon svg { width: 16px; height: 16px; fill: var(--muted); }
+  .pf-switch:active > .pf-icon { background: var(--line); }
   .pf-switch small { color: var(--text); font-size: 22px; font-weight: 800; }
   .pf-title > .pf-icon, .pf-title > span:first-child { display: none; }
   .pf-top { position: relative; align-items: flex-start; }
