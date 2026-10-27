@@ -86,7 +86,7 @@ function render() {
     track.type = "button";
     track.addEventListener("click", () => void toggle(item.address));
     const action = node("td");
-    action.append(track);
+    action.append(bubblesLink(item.address, true), track);
     row.append(node("td", "rank", String(index + 1)), who, node("td", "left muted", item.kind), networks,
       node("td", "", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total)), action);
     return row;

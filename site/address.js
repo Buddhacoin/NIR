@@ -13,13 +13,17 @@ const en = {
   colAsset: "Asset", colChain: "Network", colPrice: "Price", colAmount: "Amount", colValue: "Value", colAssets: "Assets", colShare: "Share",
   history: "Balance history", shares: "Asset shares", counterparties: "Top counterparties", counterNote: "From the loaded transfers: who this address deals with most.",
   colWallet: "Address", colIn: "Received from", colOut: "Sent to", colCount: "Transfers", dirAll: "Transfers", dirIn: "Inflow", dirOut: "Outflow",
-  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name", visualize: "◉ Links",
+  colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD", colValue2: "Value", colToken: "Token", more: "Show more", suggest: "✎ Suggest a name", visualize: "Bubbles: links",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Отследить адрес", tracked: "★ Отслеживается",
-    mine: "Это мой адрес", isMine: "✓ Мой адрес", copied: "Скопировано", missing: "Это не адрес кошелька.",
+  ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Следить за кошельком", tracked: "★ Слежу",
+    trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
+    mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
+    mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
+    trackDone: "Готово: кошелёк в профиле во вкладке «Отслеживаемые».",
+    mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     listed: (names) => `В сети ${names} у адреса слишком много токенов для обозревателя: показаны токены 1000 крупнейших монет, прочитанные напрямую из сети; мелкие и редкие токены могут не войти.`,
     partial: (names) => `Не удалось загрузить токены в сети ${names}: у адреса слишком много токенов, обозреватель не успел ответить. Показан баланс монеты сети.`,
@@ -41,8 +45,12 @@ const words = {
     askName: "Как называется этот кошелёк? (2–40 символов, например «Биржа Olympus — горячий кошелёк»)",
     askLink: "Ссылка, где это опубликовано (необязательно, https://…)", sent: "Спасибо! Подпись появится после проверки модератором.",
     signInSuggest: "Войдите через Google, чтобы предлагать подписи." },
-  en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Track address", tracked: "★ Tracked",
-    mine: "This is mine", isMine: "✓ My address", copied: "Copied", missing: "This is not a wallet address.",
+  en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Watch wallet", tracked: "★ Watching",
+    trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
+    mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
+    mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
+    trackDone: "Done: the wallet is in your profile under Tracked.",
+    mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     listed: (names) => `On ${names} the address holds too many tokens for the explorer: the tokens of the 1,000 largest coins are shown, read from the network itself; small and rare tokens may be missing.`,
     partial: (names) => `Tokens on ${names} did not load: the address holds too many and the explorer timed out. The network coin balance is shown.`,
@@ -102,7 +110,8 @@ function renderHead() {
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;
   $("#address").textContent = address;
-  $("#visualize").href = `/visualizer/?address=${encodeURIComponent(address)}`;
+  $("#visualize").href = bubblesUrl(address);
+  if (!$("#visualize svg")) $("#visualize").insertAdjacentHTML("afterbegin", BUBBLES_ICON);
   const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
   $("#avatar").style.background = `linear-gradient(135deg,hsl(${hue} 70% 55%),hsl(${(hue + 70) % 360} 70% 40%))`;
   $("#avatar").textContent = (data.name ?? "◎")[0].toUpperCase();
@@ -116,8 +125,10 @@ function renderHead() {
   }),
     ...data.tags.map((tag) => node("span", "ex-chip tag", tag)));
   $("#track").textContent = saved ? t().tracked : t().track;
-  $("#track").classList.toggle("ghost", Boolean(saved));
+  $("#track").classList.toggle("on", Boolean(saved));
   $("#mine").textContent = saved?.mine ? t().isMine : t().mine;
+  $("#mine").title = t().mineHint;
+  $("#track").title = t().trackHint;
   $("#mine").classList.toggle("on", Boolean(saved?.mine));
   const partial = data.networks.filter((item) => item.partial && !item.listed).map((item) => chainName(item.chain));
   const listed = data.networks.filter((item) => item.partial && item.listed).map((item) => chainName(item.chain));
@@ -559,6 +570,14 @@ async function save(changes) {
     : await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", changes);
   if (status === 200) saved = answer.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
   renderHead();
+  // A word on what the button did, since a phone shows no hints on hover.
+  if (status === 200 && changes) {
+    const note = $("#action-note");
+    note.textContent = changes.mine ? t().mineDone : t().trackDone;
+    note.hidden = false;
+    clearTimeout(note.timer);
+    note.timer = setTimeout(() => { note.hidden = true; }, 6_000);
+  }
 }
 
 async function load() {

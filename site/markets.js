@@ -327,7 +327,7 @@ function renderTransfers() {
     const row = document.createElement("li");
     const route = document.createElement("div");
     route.className = "tf-route";
-    route.append(chainDot(item.chain), walletLink(item.from), Object.assign(document.createElement("i"), { textContent: "→" }), walletLink(item.to));
+    route.append(chainDot(item.chain), walletLink(item.from, { bubbles: false }), Object.assign(document.createElement("i"), { textContent: "→" }), walletLink(item.to, { bubbles: false }));
     const facts = document.createElement("div");
     facts.className = "tf-facts";
     const sum = Object.assign(document.createElement("a"), { href: `${CHAINS[item.chain]?.tx ?? "#"}${item.hash}`, target: "_blank", rel: "noopener",

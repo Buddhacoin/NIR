@@ -93,7 +93,8 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null } = {}) {
+  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null,
+  crawlGap = 400, crawlPages = 40 } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -151,6 +152,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         get(`${explorer.api}/transactions?filter=validated`).then((data) => (data?.items ?? []).map((item) => normalizeTransaction(chain, item, explorer.native))).catch(() => []),
       ]).concat(nodes.feed().catch(() => [])));
       for (const item of lists.flat()) if (item && item.time) seen.set(item.id, item);
+      // Every transfer the feed sees joins the store, so links build up for any wallet.
+      try { ledger?.store(lists.flat().filter(Boolean)); } catch {}
       // The newest 400 are kept, so the feed grows while people watch.
       const kept = [...seen.values()].sort((left, right) => right.time - left.time).slice(0, 400);
       seen.clear();
@@ -181,6 +184,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       result.push({ token: { address: info.address, symbol: label(info.symbol, 20) ?? "?", name: label(info.name) ?? "",
         icon: /^\/images\/[\w./-]+$/.test(info.image ?? "") ? `https://ethplorer.io${info.image}` : siteIcon(info.website), price: rate }, amount, usd: amount * rate });
     }
+    // The network coin's balance and price too, for when the explorer does not answer.
+    result.native = { amount: number(data.ETH?.balance), price: number(data.ETH?.price?.rate) };
     return result;
   }
 
@@ -194,12 +199,15 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const full = chain === "eth" ? Promise.race([ethplorer(address), new Promise((resolve) => { setTimeout(resolve, 8_000, null).unref?.(); })]) : Promise.resolve(null);
         // The listed tokens are read from the network's node at the same time, in case the explorer is too slow.
         const backup = nodes.listedTokens(chain, address).catch(() => null);
-        const [info, balances] = await Promise.all([get(`${explorer.api}/addresses/${address}`),
+        // The explorer's own answer may fail (busy, or turning a server away): Ethplorer stands in for it on the main network.
+        const [info, balances] = await Promise.all([get(`${explorer.api}/addresses/${address}`).catch((error) => (chain === "eth" ? null : Promise.reject(error))),
           Promise.race([get(`${explorer.api}/addresses/${address}/token-balances`),
             // With the node's copy on its way, the explorer gets a few seconds only.
             new Promise((resolve) => { setTimeout(resolve, BACKUP[chain] ? Math.min(tokenWait, 6_000) : tokenWait, undefined).unref?.(); })]).catch(() => undefined)]);
-        const price = number(info?.exchange_rate);
-        const native = units(info?.coin_balance ?? "0", 18) ?? 0;
+        const priced = await full;
+        if (!info && !priced) throw new Error("the explorer did not answer");
+        const price = number(info?.exchange_rate) ?? priced?.native?.price ?? null;
+        const native = info ? units(info.coin_balance ?? "0", 18) ?? 0 : priced?.native?.amount ?? 0;
         const assets = native > 0 ? [{ chain, token: { address: null, symbol: explorer.native, name: explorer.native, icon: null, price },
           amount: native, usd: price === null ? null : native * price }] : [];
         for (const item of Array.isArray(balances) ? balances : []) {
@@ -209,7 +217,6 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
           if (!amount || coin.price === null || amount * coin.price < 0.01) continue;
           assets.push({ chain, token: coin, amount, usd: amount * coin.price });
         }
-        const priced = await full;
         if (priced) {
           // Ethplorer's list replaces the explorer's: it has every token, the explorer's may be cut short.
           assets.splice(native > 0 ? 1 : 0);
@@ -219,7 +226,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const listed = !priced && balances === undefined ? await backup : null;
         if (listed) assets.push(...listed);
         // Any trace on the network: a balance, a token, a transfer or a transaction.
-        const active = Boolean(native > 0 || info?.has_tokens || info?.has_token_transfers || info?.has_logs || info?.creation_tx_hash || Number(info?.nonce) > 0);
+        const active = Boolean(native > 0 || priced?.length || info?.has_tokens || info?.has_token_transfers || info?.has_logs || info?.creation_tx_hash || Number(info?.nonce) > 0);
         return { chain, ok: true, partial: !priced && balances === undefined, listed: Boolean(listed), active, info: info ? party({ ...info, hash: address }) : null, assets: assets.sort((left, right) => (right.usd ?? 0) - (left.usd ?? 0)).slice(0, 100) };
       } catch {
         return { chain, ok: false, info: null, assets: [] };
@@ -291,11 +298,103 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     const last = Array.isArray(list) && list.length >= 25 ? list.at(-1).txid : null;
     return { items, next: last ? { after: last } : null };
   }
+  const rawTransfers = (address, chain, direction, cursor) => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
+    : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor));
   function transfers(address, chain, direction, cursor) {
     const key = `transfers:${address.toLowerCase()}:${chain}:${direction}:${JSON.stringify(cursor ?? null)}`;
-    return cached(key, 60_000, async () => (addressKind(address) === "utxo" ? utxoTransfers(address, direction, cursor)
-      : NODES[chain] ? nodes.addressTransfers(address, chain, direction, cursor?.before ?? null) : evmTransfers(address, chain, direction, cursor)),
-    { nodes: Boolean(NODES[chain]) && addressKind(address) !== "utxo" });
+    return cached(key, 60_000, async () => {
+      const page = await rawTransfers(address, chain, direction, cursor);
+      try { ledger?.store(page.items); } catch {}
+      return page;
+    }, { nodes: Boolean(NODES[chain]) && addressKind(address) !== "utxo" });
+  }
+
+  // --- The crawler: a wallet's transfer pages read further back into the store. The newest page of
+  // every network is read at once (again once it is ten minutes old); the older pages one request at
+  // a time behind it, up to `crawlPages` a network, so the explorers are never flooded.
+  const crawlJobs = [];
+  const crawlActive = new Map(); // lower-case address → pages queued or being read
+  const heads = new Map(); // lower-case address → its newest pages being read
+  let crawlRunning = false;
+  const chainsOf = (address) => (addressKind(address) === "utxo" ? [UTXO.id] : [...Object.keys(EXPLORERS), ...Object.keys(NODES)]);
+  const busy = (key, step) => {
+    const left = (crawlActive.get(key) ?? 0) + step;
+    if (left > 0) crawlActive.set(key, left); else crawlActive.delete(key);
+  };
+  function enqueue(job) {
+    if (crawlJobs.length >= 5_000) return;
+    busy(job.address.toLowerCase(), 1);
+    crawlJobs.push(job);
+    if (!crawlRunning) void runCrawl();
+  }
+  async function runCrawl() {
+    crawlRunning = true;
+    while (crawlJobs.length) {
+      const job = crawlJobs.shift();
+      try {
+        const page = await rawTransfers(job.address, job.chain, "all", job.cursor);
+        ledger.store(page.items);
+        const state = ledger.crawled(job.address, job.chain);
+        const pages = (state?.pages ?? 1) + 1;
+        const done = !page.next || pages >= crawlPages;
+        ledger.markCrawled(job.address, job.chain, { headAt: state?.headAt ?? now(), cursor: page.next, done, pages });
+        if (!done) enqueue({ address: job.address, chain: job.chain, cursor: page.next });
+      } catch {}
+      busy(job.address.toLowerCase(), -1);
+      await new Promise((resolve) => { setTimeout(resolve, crawlGap).unref?.(); });
+    }
+    crawlRunning = false;
+  }
+  // Starts (or freshens) a wallet's crawl; resolves once its newest pages are in the store.
+  function crawl(address) {
+    const key = address.toLowerCase();
+    if (heads.has(key)) return heads.get(key);
+    const stale = chainsOf(address).filter((chain) => now() - (ledger.crawled(address, chain)?.headAt ?? 0) > 600_000);
+    const deeper = () => {
+      if (crawlActive.has(key)) return;
+      for (const chain of chainsOf(address)) {
+        const state = ledger.crawled(address, chain);
+        if (state && !state.done && state.cursor && !NODES[chain]) enqueue({ address, chain, cursor: state.cursor });
+      }
+    };
+    if (!stale.length) { deeper(); return Promise.resolve(); }
+    busy(key, 1);
+    const job = Promise.all(stale.map(async (chain) => {
+      try {
+        const page = await rawTransfers(address, chain, "all", null);
+        ledger.store(page.items);
+        const state = ledger.crawled(address, chain);
+        ledger.markCrawled(address, chain, { headAt: now(), cursor: state?.cursor ?? page.next ?? null,
+          done: state ? state.done : !page.next || Boolean(NODES[chain]), pages: Math.max(1, state?.pages ?? 1) });
+      } catch {}
+    })).then(() => { heads.delete(key); busy(key, -1); deeper(); });
+    heads.set(key, job);
+    return job;
+  }
+  // A wallet's links from the store: the other wallets in a table, each transfer as
+  // [time, network, other wallet's index, 1 coming in | 0 going out, dollars].
+  async function links(address) {
+    const key = address.toLowerCase();
+    const first = crawl(address);
+    if (!ledger.rows(address, 1).length) await Promise.race([first, new Promise((resolve) => { setTimeout(resolve, 6_000).unref?.(); })]);
+    const rows = ledger.rows(address, 6_000);
+    const index = new Map();
+    const parties = [];
+    const counts = new Map();
+    const out = rows.map((row) => {
+      const incoming = row.to === key;
+      const other = incoming ? row.from : row.to;
+      if (!index.has(other)) { index.set(other, parties.length); parties.push(other); }
+      counts.set(other, (counts.get(other) ?? 0) + (row.usd ?? 0) + 1);
+      return [row.time, row.chain, index.get(other), incoming ? 1 : 0, row.usd === null ? null : Math.round(row.usd * 100) / 100];
+    });
+    // The open labels of the biggest counterparties, waited for a moment.
+    const top = [...counts].sort((left, right) => right[1] - left[1]).slice(0, 60).map(([other]) => other).filter((other) => /^0x[0-9a-f]{40}$/.test(other));
+    await learnNames(top.map((other) => ({ from: { address: other } })), 1_500);
+    return { crawling: crawlActive.has(key), parties: parties.map((other) => {
+      const party = named({ address: other });
+      return { address: other, name: party.name ?? null, logo: party.logo ?? null };
+    }), rows: out };
   }
 
   // --- The network coin's balance by day, from the explorer.
@@ -460,7 +559,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }));
         return reply(response, 200, { results }, 300), true;
       }
-      const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history))?$/.exec(path);
+      const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history|links))?$/.exec(path);
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
       if (!part) {
@@ -478,6 +577,11 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site } : data;
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
         return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;
+      }
+      // GET …/links: the wallet's transfers from NIR Markets' own store, for the bubbles.
+      if (part === "links") {
+        if (!ledger) return reply(response, 404, { error: "no transfer store" }), true;
+        return reply(response, 200, await links(address), 5), true;
       }
       const chain = addressKind(address) === "utxo" ? UTXO.id : url.searchParams.get("chain") ?? "eth";
       if (chain !== UTXO.id && !Object.hasOwn(EXPLORERS, chain) && !Object.hasOwn(NODES, chain)) return reply(response, 404, { error: "unknown network" }), true;
@@ -499,5 +603,5 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
   }
 
-  return { handle, feed, holdings, transfers, history, search, warm, names, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }
