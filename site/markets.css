@@ -1396,11 +1396,14 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-sides { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 10px; }
 .bk-side, .bk-trades { width: 100%; font-variant-numeric: tabular-nums; }
 .bk-side td, .bk-trades td { padding: 7px 10px; }
+/* The bars grow out from the middle between the two sides, like a fir tree: bids to the left, asks to the right. */
 .bk-side tbody tr:not(.bk-total) { background: linear-gradient(to left, var(--bar) var(--fill), transparent var(--fill)); }
+.bk-side.ask tbody tr:not(.bk-total) { background: linear-gradient(to right, var(--bar) var(--fill), transparent var(--fill)); }
 .bk-side.bid { --bar: color-mix(in srgb, var(--up) 22%, transparent); }
 .bk-side.ask { --bar: color-mix(in srgb, var(--down) 22%, transparent); }
 .bk-side tr.big td, .bk-trades tr.big td { font-weight: 800; }
-.bk-side tr.big { box-shadow: inset 3px 0 0 var(--bar-edge, transparent); }
+.bk-side tr.big { box-shadow: inset -3px 0 0 var(--bar-edge, transparent); }
+.bk-side.ask tr.big { box-shadow: inset 3px 0 0 var(--bar-edge, transparent); }
 .bk-side.bid tr.big { --bar-edge: var(--up); }
 .bk-side.ask tr.big { --bar-edge: var(--down); }
 .bk-total td { background: var(--soft); font-weight: 700; font-size: 13px; }
