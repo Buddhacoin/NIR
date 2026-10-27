@@ -36,7 +36,7 @@ function renderSatoshi() {
   const tr = node("tr");
   const name = node("td", "left");
   const cell = node("span", "coin-cell");
-  cell.append(logo({ id: "bitcoin", symbol: "BTC", image: null }), node("b", "", "BTC"));
+  cell.append(logo({ id: "bitcoin", symbol: "BTC", image: CHAINS.btc.logo }), node("b", "", "BTC"));
   name.append(cell);
   tr.append(name, node("td", "", `${estimate.toLocaleString(locale(), { maximumFractionDigits: 0 })} BTC`), node("td", "", rate ? price(estimate * rate) : "—"));
   $("#assets").replaceChildren(tr);

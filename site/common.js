@@ -446,6 +446,73 @@ function isLight() {
   return document.documentElement.dataset.theme === "light" ||
     (!document.documentElement.dataset.theme && matchMedia("(prefers-color-scheme: light)").matches);
 }
+// --- The header's sections on wide screens: each opens (on hover or a click) a menu of the pages inside it,
+// so the lists, screeners and on-chain tools hidden in tabs can be found from any page.
+const MENU = [
+  { ru: "Рынок", en: "Market", match: /^\/(?:$|charts\/|coin\/)/, groups: [
+    { ru: "Монеты", en: "Coins", items: [
+      ["/", "Криптовалюты", "Топ монет по капитализации", "Cryptocurrencies", "Top coins by market cap"],
+      ["/#trending", "В тренде", "Что ищут чаще всего", "Trending", "The most searched coins"],
+      ["/#gainers", "Рост и падение", "Лидеры роста и падения за сутки", "Gainers & losers", "The day's biggest movers"],
+      ["/#stable", "Стейблкоины", "Монеты, привязанные к доллару", "Stablecoins", "Coins pegged to the dollar"]] },
+    { ru: "Обзор", en: "Overview", items: [
+      ["/charts/", "Обзор рынка", "Капитализация и объём за всё время", "Market overview", "Market cap and volume over time"],
+      ["/charts/#fear-greed", "Индекс страха и жадности", "Настроение рынка сегодня и раньше", "Fear & Greed Index", "The market's mood, now and before"],
+      ["/charts/#dominance", "Доминация BTC и ETH", "Доля биткоина и эфира в рынке", "BTC and ETH dominance", "Bitcoin's and Ether's share of the market"]] }] },
+  { ru: "Ончейн", en: "On-chain", match: /^\/(?:wallets|transfers|address|entity|visualizer)\//, groups: [
+    { ru: "Кошельки", en: "Wallets", items: [
+      ["/wallets/", "Популярные кошельки", "Биржи, фонды, киты и их балансы", "Popular wallets", "Exchanges, funds, whales and their balances"],
+      ["/entity/?name=Satoshi%20Nakamoto", "Монеты Сатоши", "Сколько намайнил создатель биткоина", "Satoshi's coins", "What Bitcoin's creator mined"]] },
+    { ru: "Переводы", en: "Transfers", items: [
+      ["/transfers/", "Все переводы", "Переводы в сетях в реальном времени", "All transfers", "Transfers across chains, live"]] }] },
+  { ru: "Скринеры", en: "Screeners", match: /^\/screener\//, groups: [
+    { ru: "Фьючерсы", en: "Futures", items: [
+      ["/screener/", "Тренды", "Рост, падение, объём и открытый интерес", "Trends", "Moves, volume and open interest"],
+      ["/screener/densities/", "Плотности", "Крупные заявки в стаканах бирж", "Order book walls", "Big orders in the exchanges' books"],
+      ["/screener/arbitrage/", "Арбитраж", "Разница цен между биржами", "Arbitrage", "Price gaps between exchanges"],
+      ["/screener/liquidations/", "Ликвидации", "Закрытые принудительно позиции", "Liquidations", "Positions closed by force"],
+      ["/screener/listings/", "Листинги", "Новые монеты на биржах", "Listings", "New coins on the exchanges"],
+      ["/screener/heatmap/", "Тепловая карта", "Весь рынок одной картинкой", "Heatmap", "The whole market at a glance"]] }] },
+];
+function renderMenu() {
+  const nav = document.querySelector(".top nav");
+  if (!nav) return;
+  const en = language === "en";
+  const make = (tag, className, text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
+  nav.classList.add("menu");
+  nav.replaceChildren(...MENU.map((section) => {
+    const box = make("div", `menu-item${section.match.test(location.pathname) ? " on" : ""}`);
+    const button = make("button", "menu-head", en ? section.en : section.ru);
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    const panel = make("div", "menu-panel");
+    for (const group of section.groups) {
+      panel.append(make("small", "menu-group", en ? group.en : group.ru));
+      for (const [href, ruName, ruNote, enName, enNote] of group.items) {
+        const link = make("a", "menu-link");
+        link.href = href;
+        link.append(make("b", "", en ? enName : ruName), make("span", "", en ? enNote : ruNote));
+        panel.append(link);
+      }
+    }
+    // A click (a touch screen has no hover) opens it and closes the others.
+    button.addEventListener("click", () => {
+      const open = !box.classList.contains("open");
+      for (const other of nav.querySelectorAll(".menu-item.open")) { other.classList.remove("open"); other.firstChild.setAttribute("aria-expanded", "false"); }
+      box.classList.toggle("open", open);
+      button.setAttribute("aria-expanded", String(open));
+    });
+    box.append(button, panel);
+    return box;
+  }));
+}
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.(".menu-item")) for (const box of document.querySelectorAll(".menu-item.open")) box.classList.remove("open");
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") for (const box of document.querySelectorAll(".menu-item.open")) box.classList.remove("open");
+});
+
 function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
   const en = { navScreener: "Screeners", ...own }; // words every page's header shares
   accountChanged = onAccount;
@@ -453,8 +520,11 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
   const ru = Object.fromEntries(textNodes.map((node) => [node.dataset.i18n, node.textContent]));
   const search = $("#search");
   const ruPlaceholder = search.placeholder;
+  const ruTitle = document.title; // a page's render may set its own
   function applyLanguage() {
     document.documentElement.lang = language;
+    renderMenu();
+    document.title = language === "en" && en.docTitle ? en.docTitle : ruTitle;
     for (const node of textNodes) node.textContent = (language === "en" ? en : ru)[node.dataset.i18n] ?? node.textContent;
     search.placeholder = language === "en" ? en.search : ruPlaceholder;
     $("#lang").textContent = language === "en" ? "RU" : "EN";
@@ -481,6 +551,9 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
   });
   renderTheme();
   applyLanguage();
+  // A row of section tabs wider than the screen shows the open one.
+  const openTab = document.querySelector(".sc-tabs a.on");
+  if (openTab) openTab.parentElement.scrollLeft = openTab.offsetLeft - openTab.parentElement.offsetLeft - (openTab.parentElement.clientWidth - openTab.offsetWidth) / 2;
   void loadAccount();
   void loadStrip();
   setInterval(loadNir, 60_000);
@@ -639,7 +712,7 @@ function setupSearch({ overview = () => null }) {
   let pull = 0;
   const reset = () => { start = null; pull = 0; mark.style.transform = ""; mark.classList.remove("ready", "show"); };
   window.addEventListener("touchstart", (event) => {
-    if (window.scrollY > 0 || event.touches.length > 1 || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input")) return;
+    if (window.scrollY > 0 || event.touches.length > 1 || document.body.classList.contains("searching") || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input, #stage, .suggest, .sc-tabs, .hm")) return;
     start = { x: event.touches[0].clientX, y: event.touches[0].clientY };
   }, { passive: true });
   window.addEventListener("touchmove", (event) => {

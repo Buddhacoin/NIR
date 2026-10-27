@@ -263,7 +263,7 @@ td.supply i { display: block; width: 130px; height: 5px; margin: 6px 0 0 auto; b
 .avatar { display: inline-grid; place-items: center; flex: none; border-radius: 50%; overflow: hidden; color: #fff; font-weight: 850; }
 .toast { position: fixed; left: 50%; bottom: 96px; z-index: 40; padding: 12px 18px; border-radius: 14px; background: var(--down); color: #fff;
   font-weight: 700; transform: translateX(-50%); }
-.profile-page { display: grid; gap: 16px; max-width: 860px; margin: 0 auto; }
+.profile-page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; max-width: 860px; margin: 0 auto; }
 /* The profile's head, as on the analytics sites: no frame, the picture, the name with the handle,
    the total of the owner's wallets and small chips. */
 .profile-head { display: flex; align-items: center; gap: 20px; padding: 4px 0; }
@@ -414,8 +414,9 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .coin-cell b { display: none; }
   .coin-cell span { color: var(--text); font-size: 16px; font-weight: 700; }
   .coin-cell small { display: block; color: var(--muted); font-size: 13px; }
-  tbody td:nth-child(4) { font-size: 16px; }
-  .m-spark { display: block; width: 76px; height: 26px; margin: 0 0 4px auto; }
+  table:not([class]) > #rows > tr > td:nth-child(4) { font-size: 16px; }
+  .coin-cell small { max-width: 24vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-spark { display: block; width: 64px; height: 24px; margin: 0 0 4px auto; }
 
   /* The bottom menu floats as a glass bubble over the page, as in the big phone apps. */
   .tabbar { position: fixed; right: 14px; bottom: calc(16px + env(safe-area-inset-bottom)); left: 14px; z-index: 20; display: grid;
@@ -1098,7 +1099,8 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
   .pf-chart-card .seg { display: flex; width: 100%; }
   .pf-chart-card .seg button { flex: 1; justify-content: center; }
   .pf-stats { grid-template-columns: 1fr 1fr; }
-  .pf-table th:last-child, .pf-table td:last-child { display: none; }
+  .pf-table th:last-child, .pf-table td:last-child { width: 34px; padding-right: 0; padding-left: 0; }
+  .pf-table .pf-sub { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .pf-table .m-only { display: block; }
   .pf-table td { vertical-align: top; }
 }
@@ -1267,3 +1269,44 @@ html.touch { overscroll-behavior-y: contain; }
   .hm-mini-map { margin-top: 5px; min-height: 28px; border-radius: 6px; }
   body.watching .cards, body.watching .m-brief, body.watching .chips-row { display: none; }
 }
+/* The header's sections (common.js renderMenu): a menu of the pages inside each, on hover or a click. */
+.top nav.menu { gap: 6px; }
+.menu-item { position: relative; }
+.menu-head { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; border: 0; border-radius: 10px; background: none; color: var(--muted);
+  font: inherit; font-weight: 650; cursor: pointer; white-space: nowrap; }
+.menu-head::after { content: ""; width: 6px; height: 6px; margin-top: -3px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(45deg); transition: transform .15s; }
+.menu-item.on .menu-head, .menu-head:hover, .menu-item.open .menu-head { color: var(--text); }
+.menu-item.open .menu-head::after, .menu-item:hover .menu-head::after { margin-top: 3px; transform: rotate(-135deg); }
+.menu-panel { position: absolute; top: 100%; left: -8px; z-index: 60; display: none; width: 340px; padding: 10px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--card); box-shadow: 0 18px 50px rgba(0, 0, 0, .28); }
+.menu-item:hover .menu-panel, .menu-item.open .menu-panel { display: grid; }
+.menu-item:hover::after { content: ""; position: absolute; top: 100%; right: 0; left: 0; height: 10px; }
+.menu-group { padding: 10px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.menu-link { display: grid; gap: 2px; padding: 8px 10px; border-radius: 10px; color: var(--text); }
+.menu-link b { font-size: 15px; }
+.menu-link span { color: var(--muted); font-size: 13px; font-weight: 500; }
+.menu-link:hover { background: var(--soft); }
+/* Phones: the wide tables keep what matters on screen. */
+@media (max-width: 700px) {
+  .lq-table .coin-cell, .ls-table .coin-cell, .sc-table .coin-cell { min-width: 64px; }
+  .lq-table .coin-cell span, .ls-table .coin-cell span { white-space: nowrap; }
+  .tf-all :is(th, td):is(:nth-child(1), :nth-child(4), :nth-child(5)) { display: none; }
+  .tf-all .viz-link { display: none; }
+  .tf-all :is(th, td) { padding-right: 3px; padding-left: 3px; }
+  .tf-all td:is(:nth-child(2), :nth-child(3)) { max-width: calc((100vw - 150px) / 2); overflow: hidden; text-overflow: ellipsis; }
+  .profile-head .who { flex-basis: calc(100% - 140px); }
+  .profile-head .chip { display: inline-block; border-radius: 12px; line-height: 1.35; }
+  .pr-assets :is(th, td):nth-child(2) { display: none; }
+  .pr-assets td { white-space: normal; overflow-wrap: anywhere; }
+  .markets-table :is(th, td):is(:nth-child(1), :nth-child(3), :nth-child(6)) { display: none; }
+  .trades-table .ex-empty { position: sticky; left: 0; max-width: calc(100vw - 48px); text-align: left; white-space: normal; }
+  .pf-plot:has(.pf-alloc) { height: auto; }
+  #folder-name { overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .pf-switch { max-width: calc(100vw - 110px); min-width: 0; }
+}
+@media (max-width: 1100px) {
+  .coin-main .tabs #tab-community { order: 1; }
+  .coin-main .tabs a[href="#markets"] { order: 2; }
+}
+/* Nothing scrolls behind an open dialog or sheet. */
+body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidden; }

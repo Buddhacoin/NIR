@@ -288,13 +288,16 @@ function drawHistory(box) {
   let line = `M${x(points[0][0]).toFixed(1)},${y(points[0][1]).toFixed(1)}`;
   for (let index = 1; index < points.length; index += 1) line += `H${x(points[index][0]).toFixed(1)}V${y(points[index][1]).toFixed(1)}`;
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((share) => low + (high - low) * share);
+  // Short labels, or longer ones when a narrow range makes the short ones all alike.
+  let labels = ticks.map(usdShort);
+  for (let digits = 3; new Set(labels).size < labels.length && digits <= 6; digits += 1) labels = ticks.map((value) => big(value, "$", digits));
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", width);
   svg.setAttribute("height", height);
   const left = x(points[0][0]).toFixed(1);
   svg.innerHTML = `<defs><linearGradient id="ex-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".3"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
-    ${ticks.map((value) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${usdShort(value)}</text>`).join("")}
+    ${ticks.map((value, index) => `<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${labels[index]}</text>`).join("")}
     <path d="${line}V${height - 24}H${left}Z" fill="url(#ex-fill)"/><path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2"/>
     ${[0, 0.25, 0.5, 0.75, 1].map((share) => { const time = from + (now - from) * share; return `<text class="tick" text-anchor="${share === 0 ? "start" : share === 1 ? "end" : "middle"}" x="${(share * right).toFixed(1)}" y="${height - 6}">${(short ? new Date(time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }) : new Date(time).toLocaleDateString(locale(), { day: "numeric", month: "short" }))}</text>`; }).join("")}
     <line class="ex-cursor" x1="0" x2="0" y1="0" y2="${height - 24}" visibility="hidden"/>`;
@@ -609,7 +612,12 @@ $("#copy").addEventListener("click", async () => {
 $("#share").addEventListener("click", async () => {
   const url = location.href;
   if (navigator.share) await navigator.share({ title: document.title, url }).catch(() => {});
-  else { await navigator.clipboard?.writeText(url).catch(() => {}); $("#share").textContent = t().copied; }
+  else {
+    await navigator.clipboard?.writeText(url).catch(() => {});
+    const label = $("#share").textContent;
+    $("#share").textContent = t().copied;
+    setTimeout(() => { $("#share").textContent = label; }, 1500);
+  }
 });
 $("#track").addEventListener("click", () => void save(saved ? null : { mine: false }));
 // Suggest a name: it shows once a moderator approves it.

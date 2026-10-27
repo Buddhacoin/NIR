@@ -205,7 +205,17 @@ function holdings(list = chosen()) {
   return [...byCoin.values()].map((item) => {
     const coin = coins.get(item.id) ?? {};
     const value = Number.isFinite(coin.price) ? item.amount * coin.price : null;
-    const before = value !== null && Number.isFinite(coin.change24h) ? value / (1 + coin.change24h / 100) : value;
+    // A day ago: what was held then at the price then, plus what was bought (less what was sold) since, at its own price.
+    const then = Number.isFinite(coin.price) && Number.isFinite(coin.change24h) ? coin.price / (1 + coin.change24h / 100) : coin.price;
+    let recent = 0;
+    let recentCost = 0;
+    for (const record of item.records) {
+      if (record.at < Date.now() - 86_400_000) continue;
+      const sign = record.kind === "buy" || record.kind === "in" ? 1 : -1;
+      recent += sign * record.amount;
+      recentCost += sign * record.amount * (record.price || then);
+    }
+    const before = value === null ? null : (item.amount - recent) * then + recentCost;
     const profit = value === null ? null : value - item.cost + item.realized;
     return { ...item, coin, price: coin.price ?? null, change1h: coin.change1h ?? null, change24h: coin.change24h ?? null,
       change7d: coin.change7d ?? null, name: coin.name ?? item.id, value, dayChange: value === null ? 0 : value - before, profit,
@@ -424,7 +434,7 @@ function lineChart(box, series, tick, label, zeroLine = false) {
   const y = (value) => top + (high - value) / (high - low) * (bottom - top);
   const step = (() => { const raw = (high - low) / 4; const power = 10 ** Math.floor(Math.log10(raw)); return [1, 2, 2.5, 5, 10].map((factor) => factor * power).find((size) => size >= raw); })();
   const grid = [];
-  for (let value = Math.ceil(low / step) * step; value <= high; value += step) {
+  for (let value = Math.ceil(low / step) * step + 0; value <= high; value += step) {
     grid.push(`<line class="grid" x1="0" x2="${right}" y1="${y(value).toFixed(1)}" y2="${y(value).toFixed(1)}"/><text class="tick" x="${right + 8}" y="${(y(value) + 4).toFixed(1)}">${tick(value)}</text>`);
   }
   const span = to - from;
@@ -623,7 +633,9 @@ function render() {
   $("#cost").textContent = money(sum.cost);
   const moving = list.filter((item) => item.amount > 1e-12 && item.profitPct !== null);
   const best = moving.reduce((top, item) => (!top || item.profitPct > top.profitPct ? item : top), null);
-  const worst = moving.reduce((low, item) => (!low || item.profitPct < low.profitPct ? item : low), null);
+  // With one coin (or all alike) there is no worst apart from the best.
+  const lowest = moving.reduce((low, item) => (!low || item.profitPct < low.profitPct ? item : low), null);
+  const worst = lowest && lowest !== best && lowest.profitPct !== best.profitPct ? lowest : null;
   for (const [key, item] of [["best", best], ["worst", worst]]) {
     $(`#${key}`).replaceChildren(...(item ? [logo({ id: item.id, symbol: item.coin.symbol ?? "?", image: item.coin.image ?? null }), item.coin.symbol ?? item.id] : ["—"]));
     setChange($(`#${key}-pct`), item ? item.profitPct : null);
@@ -642,6 +654,7 @@ function render() {
 
 // --- The portfolio list on a phone: a sheet from the bottom with every portfolio, its value and day's change.
 function renderSheet() {
+  $("#sheet-edit").hidden = !portfolios.some((item) => String(item.id) === String(selected)); // "All portfolios" has nothing to rename
   const line = (icon, label, list, chosenHere, choose) => {
     const sum = totals(list);
     const row = node("button", `pf-sheet-row${chosenHere ? " on" : ""}`);

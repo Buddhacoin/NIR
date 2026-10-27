@@ -4,6 +4,7 @@
 // (numbers, logos, themes, languages, NIR's figures) are in common.js.
 
 const en = {
+  docTitle: "NIR Markets — crypto prices, trends and the market",
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   nirOpen: "NIR network is open", nirMiners: "Miners online", nirPioneers: "Pioneers", nirMined: "Mined",
@@ -409,7 +410,7 @@ $("#m-brief").addEventListener("click", () => $("#m-brief").classList.toggle("op
 // A coin page's bottom bar links to /#watch; the menu's movers link to /#gainers.
 function openHash() {
   const opening = location.hash.slice(1);
-  if (!["watch", "trending", "gainers", "losers"].includes(opening)) return;
+  if (!["watch", "trending", "gainers", "losers", "stable"].includes(opening)) return;
   document.querySelector(`.tabs [data-tab=${opening}]`).click();
   if (opening !== "watch") document.querySelector(".tabs").scrollIntoView();
 }
