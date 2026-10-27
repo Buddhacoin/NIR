@@ -354,7 +354,11 @@ last hour's events (each counted once even when a stream and the list both
 bring it). The new-listings screener (`/screener/listings/`, `GET
 /market/listings`) notes every futures market that appears on one of the six
 exchanges after the trend screener began watching it, with the coin's price
-then and now, for 30 days.
+then and now, for 30 days. The heatmap (`/screener/heatmap/`, `site/heatmap.js`)
+needs no service of its own: it lays the top coins of the market overview
+(sized by market cap; 1 h, 24 h or 7 d change) or the trend screener's futures
+coins (sized by day volume; 5 m to 24 h change) out as a squarified treemap,
+coloured by the change, stablecoins left out unless asked for.
 
 `/screener/densities/` is the order-book density screener
 (`blockchain/market-densities.mjs`, `GET /market/densities`): big resting limit

@@ -6,7 +6,7 @@ const en = {
   stCoins: "Coins:", stExchanges: "Exchanges:", stCap: "Market cap:", stVolume: "24h volume:", stDominance: "Dominance:",
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
-  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings",
+  tabTrends: "Trends", tabDensities: "Order book walls", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
   title: "New listings", colCoin: "Coin", colExchange: "Exchange", colWhen: "When", colThen: "Price at listing", colNow: "Price now", colChange: "Change",
   source: "Data: the futures market lists of Binance, Bybit, OKX, Bitget, Gate and MEXC, read by the server every minute. A listing is a coin that appeared on an exchange after the server began watching it.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
