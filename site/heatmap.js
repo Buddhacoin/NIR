@@ -33,41 +33,6 @@ let spot = null;
 let futures = null;
 let coins = new Map(); // symbol → market coin, for the futures tiles' logos and links
 
-// --- The squarified treemap: rows of tiles laid along the shorter side, each row as close to square as it gets.
-function squarify(items, x, y, width, height) {
-  const total = items.reduce((sum, item) => sum + item.weight, 0);
-  const scale = (width * height) / total;
-  const rest = items.map((item) => ({ ...item, area: item.weight * scale }));
-  const tiles = [];
-  const worst = (row, side) => {
-    const sum = row.reduce((all, item) => all + item.area, 0);
-    const max = Math.max(...row.map((item) => item.area));
-    const min = Math.min(...row.map((item) => item.area));
-    return Math.max((side * side * max) / (sum * sum), (sum * sum) / (side * side * min));
-  };
-  let box = { x, y, width, height };
-  while (rest.length) {
-    const side = Math.min(box.width, box.height);
-    const row = [rest.shift()];
-    while (rest.length && worst([...row, rest[0]], side) <= worst(row, side)) row.push(rest.shift());
-    const sum = row.reduce((all, item) => all + item.area, 0);
-    if (box.width >= box.height) {
-      // A column on the left.
-      const columnWidth = sum / box.height;
-      let top = box.y;
-      for (const item of row) { const h = item.area / columnWidth; tiles.push({ ...item, x: box.x, y: top, width: columnWidth, height: h }); top += h; }
-      box = { x: box.x + columnWidth, y: box.y, width: box.width - columnWidth, height: box.height };
-    } else {
-      // A row along the top.
-      const rowHeight = sum / box.width;
-      let left = box.x;
-      for (const item of row) { const w = item.area / rowHeight; tiles.push({ ...item, x: left, y: box.y, width: w, height: rowHeight }); left += w; }
-      box = { x: box.x, y: box.y + rowHeight, width: box.width, height: box.height - rowHeight };
-    }
-  }
-  return tiles;
-}
-
 // A stablecoin: a known one, or a coin that holds a dollar (within 3%, under 1% over the week).
 const isStable = (coin) => STABLE.has(coin.symbol) || (coin.price > 0.97 && coin.price < 1.03 && Math.abs(coin.change7d ?? coin.ch24h ?? 99) < 1);
 function items() {

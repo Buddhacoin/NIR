@@ -10,7 +10,7 @@ const en = {
   nirPool: "🏆 210,000 NIR for pioneers", nirCta: "Mine NIR with one button →",
   navCoins: "Cryptocurrencies", navMovers: "Gainers & losers", navNir: "About NIR", navMine: "NIR mining",
   search: "Search coins or addresses", marketStatus: "Market status", fearGreed: "Fear & Greed", marketCap: "Market cap",
-  volume24: "Volume 24h", dominance: "BTC dominance", trending: "Trending", gainers24: "Top gainers 24h",
+  volume24: "Volume 24h", heatmap: "Heatmap", trending: "Trending", gainers24: "Top gainers 24h",
   tabTop: "Top", tabWatch: "Watchlist", tabTrending: "Trending", tabGainers: "Gainers", tabLosers: "Losers", tabStable: "Stablecoins", tabWallets: "Popular wallets",
   colCoin: "Coin", colPrice: "Price", col1h: "1h", col24h: "24h", col7d: "7d", colCap: "Market cap",
   colVolume: "Volume 24h", col7days: "7 days", nirRow: "test network · mined with intelligence",
@@ -18,17 +18,17 @@ const en = {
   loading: "Loading prices…", pricesBy: "Prices:", chartsBy: "Charts:", updated: "Updated",
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", mineArrow: "Mine →",
-  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", risingNow: "Rising in 24h", altSeason: "Altcoin season · 7d", allTransfers: "All transfers", colSentiment: "Sentiment",
+  chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", allTransfers: "All transfers", colSentiment: "Sentiment",
   dataBy: "Data:",
 };
 const words = {
-  ru: { altSeason: "сезон альткоинов", btcSeason: "сезон биткоина", neutralSeason: "нейтрально", moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, communityTitle: "Голоса сообщества CoinGecko за сутки: доля «рост»", rate: "Оценить", rateTitle: "Голосов пока нет — оцените первым", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
+  ru: { moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, communityTitle: "Голоса сообщества CoinGecko за сутки: доля «рост»", rate: "Оценить", rateTitle: "Голосов пока нет — оцените первым", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",
     unavailable: "Курсы временно недоступны. Попробуйте обновить страницу через минуту.",
     fear: { "Extreme Fear": "Сильный страх", Fear: "Страх", Neutral: "Нейтрально", Greed: "Жадность", "Extreme Greed": "Сильная жадность" },
     brief: (d) => `Рынок за сутки ${d.cap >= 0 ? "вырос" : "снизился"} на ${d.capPct}: капитализация ${d.capValue}. ` +
       `Bitcoin стоит ${d.btc} (${d.btcPct}), доминация — ${d.dom}. Сильнее всех растёт ${d.top} (${d.topPct}), ` +
       `сильнее всех падает ${d.low} (${d.lowPct}).${d.fg ? ` Индекс страха и жадности — ${d.fg}.` : ""}` },
-  en: { altSeason: "altcoin season", btcSeason: "bitcoin season", neutralSeason: "neutral", moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, communityTitle: "CoinGecko community votes over a day: share of “rise”", rate: "Rate", rateTitle: "No votes yet — be the first", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
+  en: { moodTitle: (rise, fall) => `Votes over 7 days: rise ${rise}, fall ${fall}`, communityTitle: "CoinGecko community votes over a day: share of “rise”", rate: "Rate", rateTitle: "No votes yet — be the first", empty: "Nothing found", watchEmpty: "Tap ☆ next to a coin or on its page to add it to your watchlist.",
     unavailable: "Prices are unavailable right now. Try reloading in a minute.",
     fear: {},
     brief: (d) => `The market ${d.cap >= 0 ? "rose" : "fell"} ${d.capPct} in 24 hours to a ${d.capValue} market cap. ` +
@@ -89,7 +89,9 @@ function visibleCoins() {
   if (tab === "watch") {
     coins = coins.filter((coin) => watch.has(coin.id));
     const missing = [...watch].filter((id) => !coins.some((coin) => coin.id === id));
-    coins = [...coins, ...watchExtra.filter((coin) => watch.has(coin.id))];
+    // Each coin once, even when the top list and the fetched ones both have it.
+    const seen = new Set();
+    coins = [...coins, ...watchExtra.filter((coin) => watch.has(coin.id))].filter((coin) => !seen.has(coin.id) && seen.add(coin.id));
     if (missing.some((id) => !watchExtra.some((coin) => coin.id === id))) void loadWatchExtra(missing);
   }
   if (tab === "stable") coins = coins.filter((coin) => STABLE.has(coin.symbol));
@@ -197,6 +199,41 @@ function renderTable() {
   renderPager();
 }
 
+// The small heatmap in the market card: the top coins (without stablecoins) sized by market cap and
+// coloured by the day's change; it opens the heatmap screener.
+function renderHeatmap() {
+  const map = $("#hm-mini");
+  const width = map.clientWidth;
+  const height = map.clientHeight;
+  const coins = (data?.coins ?? []).filter((coin) => coin.marketCap > 0 && !STABLE.has(coin.symbol)).slice(0, width > 200 ? 40 : 16);
+  if (!width || !height || !coins.length) return;
+  const tiles = squarify(coins.map((coin) => ({ coin, weight: Math.sqrt(coin.marketCap) })), 0, 0, width, height);
+  map.replaceChildren(...tiles.map(({ coin, x, y, width: w, height: h }) => {
+    const change = Number.isFinite(coin.change24h) ? coin.change24h : null;
+    const tile = document.createElement("span");
+    tile.className = `hm-tile ${change === null ? "" : change >= 0 ? "up" : "down"}`;
+    Object.assign(tile.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, fontSize: `${Math.max(9, Math.min(18, Math.sqrt(w * h) / 4.5))}px` });
+    tile.style.setProperty("--heat", change === null ? "0" : Math.min(1, 0.18 + Math.abs(change) / 6).toFixed(2));
+    if (w > 36 && h > 22) {
+      const name = document.createElement("b");
+      name.textContent = coin.symbol;
+      tile.append(name);
+      if (h > 40) {
+        const value = document.createElement("span");
+        value.textContent = percentText(change);
+        tile.append(value);
+      }
+    }
+    return tile;
+  }));
+}
+// Drawn again when its box changes size (the window, or the cards beside it filling in).
+let heatmapSize = "";
+new ResizeObserver(() => {
+  const size = `${$("#hm-mini").clientWidth}x${$("#hm-mini").clientHeight}`;
+  if (size !== heatmapSize && data) { heatmapSize = size; renderHeatmap(); }
+}).observe($("#hm-mini"));
+
 function renderCards() {
   const t = words[language];
   const g = data.global;
@@ -205,19 +242,7 @@ function renderCards() {
   capChange.className = changeClass(g?.marketCapChange24h);
   capChange.textContent = percentText(g?.marketCapChange24h);
   $("#g-volume").textContent = big(g?.volume, "$", 1);
-  // How many of the top coins rose today, and how many of the top 50 beat BTC over the week.
-  const moving = (data.coins ?? []).filter((coin) => Number.isFinite(coin.change24h));
-  const rising = moving.filter((coin) => coin.change24h > 0).length;
-  $("#g-rising").textContent = moving.length ? `${rising} / ${moving.length}` : "—";
-  $("#g-rising-share").textContent = moving.length ? `${Math.round(rising / moving.length * 100)}%` : "";
-  const btcWeek = (data.coins ?? []).find((coin) => coin.symbol === "BTC")?.change7d;
-  const alts = (data.coins ?? []).slice(0, 50).filter((coin) => coin.symbol !== "BTC" && !STABLE.has(coin.symbol) && Number.isFinite(coin.change7d));
-  const season = Number.isFinite(btcWeek) && alts.length ? Math.round(alts.filter((coin) => coin.change7d > btcWeek).length / alts.length * 100) : null;
-  $("#g-alt").textContent = season === null ? "—" : `${season}/100`;
-  $("#g-alt-label").textContent = season === null ? "" : season >= 75 ? t.altSeason : season <= 25 ? t.btcSeason : t.neutralSeason;
-  $("#g-btc").textContent = g?.btcDominance === null || g?.btcDominance === undefined ? "—"
-    : `${g.btcDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%`;
-  $("#g-eth").textContent = g?.ethDominance ? `ETH ${g.ethDominance.toLocaleString(locale(), { maximumFractionDigits: 1 })}%` : "";
+  renderHeatmap();
   const fg = data.fearGreed;
   $("#fg-value").textContent = fg ? String(fg.value) : "—";
   $("#fg-label").textContent = fg ? (t.fear[fg.label] ?? fg.label) : "";
@@ -349,8 +374,16 @@ void loadTransfers();
 setInterval(() => { if (!document.hidden) void loadTransfers(); }, 20_000);
 
 for (const button of document.querySelectorAll("[data-tab]")) {
-  button.addEventListener("click", () => {
+  button.addEventListener("click", (event) => {
+    // The bottom bar switches lists in place, from the top of the page.
+    if (button.closest(".tabbar")) {
+      event.preventDefault();
+      scrollTo({ top: 0 });
+      if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+    }
     tab = button.dataset.tab;
+    // The watchlist on a phone is the list alone, without the market cards above it.
+    document.body.classList.toggle("watching", tab === "watch");
     for (const other of document.querySelectorAll(".tabs [data-tab]")) other.classList.toggle("on", other.dataset.tab === tab);
     // The watchlist opens from the menu at the top; its tab shows only while it is open.
     $(".tabs [data-tab=watch]").hidden = tab !== "watch";

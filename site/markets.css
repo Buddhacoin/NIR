@@ -418,14 +418,14 @@ footer .right { margin-left: auto; text-decoration: none; color: var(--accent); 
   .m-spark { display: block; width: 76px; height: 26px; margin: 0 0 4px auto; }
 
   /* The bottom menu floats as a glass bubble over the page, as in the big phone apps. */
-  .tabbar { position: fixed; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); left: 12px; z-index: 20; display: grid;
-    grid-template-columns: repeat(5, 1fr); padding: 6px; border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); border-radius: 999px;
+  .tabbar { position: fixed; right: 14px; bottom: calc(16px + env(safe-area-inset-bottom)); left: 14px; z-index: 20; display: grid;
+    grid-template-columns: repeat(5, 1fr); padding: 4px; border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); border-radius: 999px;
     background: color-mix(in srgb, var(--panel) 60%, transparent); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.18);
     -webkit-backdrop-filter: blur(22px) saturate(180%); backdrop-filter: blur(22px) saturate(180%); }
-  .tabbar a { display: grid; justify-items: center; gap: 2px; padding: 7px 0 6px; border-radius: 999px; color: var(--muted); font-size: 10px; font-weight: 650;
+  .tabbar a { display: grid; justify-items: center; gap: 1px; padding: 5px 0 4px; border-radius: 999px; color: var(--muted); font-size: 9.5px; font-weight: 650;
     transition: background 0.2s, color 0.2s; }
   .tabbar a.on { color: var(--text); background: color-mix(in srgb, var(--text) 10%, transparent); }
-  .tabbar svg, .tabbar img { width: 24px; height: 24px; }
+  .tabbar svg, .tabbar img { width: 22px; height: 22px; }
 
   .pill.account { display: none; } /* the bottom bar has Sign in / Profile */
   .profile-head { flex-wrap: wrap; }
@@ -1078,7 +1078,8 @@ td.mood a.rate:hover { border-color: var(--accent); color: var(--accent); }
 @media (max-width: 700px) {
   .pf-side { display: none; }
   .pf-switch { cursor: pointer; }
-  .pf-switch > span { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--soft); color: var(--muted); font-size: 15px; }
+  .pf-switch > .pf-icon { display: grid; width: 34px; height: 34px; border-radius: 10px; }
+  .pf-switch > .pf-icon svg { width: 19px; height: 19px; }
   .pf-switch small { color: var(--text); font-size: 22px; font-weight: 800; }
   .pf-title > .pf-icon, .pf-title > span:first-child { display: none; }
   .pf-top { position: relative; align-items: flex-start; }
@@ -1250,3 +1251,18 @@ html.touch { overscroll-behavior-y: contain; }
 .hm-tip { position: absolute; z-index: 5; display: grid; gap: 3px; width: 200px; box-sizing: border-box; padding: 10px 12px; border-radius: 12px;
   background: var(--panel2); border: 1px solid var(--line); box-shadow: 0 8px 30px #0006; font-size: 13px; pointer-events: none; }
 .screener:has(.hm) { position: relative; }
+/* Home: the small heatmap in the market card. Wide screens: fear and greed beside the cap and the
+   volume, the heatmap across the card below; phones: in the row of tiles, the third. */
+.hm-mini { display: flex; flex-direction: column; min-width: 0; }
+.hm-mini-map { position: relative; display: block; flex: 1; min-height: 30px; margin-top: 8px; overflow: hidden; border-radius: 8px; }
+.hm-mini .hm-tile:hover { outline: 0; }
+@media (min-width: 701px) {
+  .mini { grid-template-rows: auto auto 1fr; }
+  .mini .gauge { grid-row: span 2; display: grid; align-content: center; }
+  .hm-mini { grid-column: 1 / -1; min-height: 150px; }
+}
+@media (max-width: 700px) {
+  .mini { grid-template-columns: 1.15fr 1.15fr 1fr 0.9fr; }
+  .hm-mini-map { margin-top: 5px; min-height: 28px; border-radius: 6px; }
+  body.watching .cards, body.watching .m-brief, body.watching .chips-row { display: none; }
+}

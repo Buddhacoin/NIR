@@ -13,7 +13,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=61">
+  <link rel="stylesheet" href="/markets.css?v=62">
 </head>
 <body>
   <div class="nirbar">
@@ -56,9 +56,7 @@
             <b id="fg-value">—</b><span id="fg-label"></span></a>
           <a href="/charts/"><small data-i18n="marketCap">Капитализация</small><b id="g-cap">—</b><em id="g-cap-change"></em></a>
           <a href="/charts/"><small data-i18n="volume24">Объём за 24 ч</small><b id="g-volume">—</b></a>
-          <a href="/charts/#dominance"><small data-i18n="dominance">Доминация BTC</small><b id="g-btc">—</b><em class="flat" id="g-eth"></em></a>
-          <a class="hide-s" href="/charts/" title="Сколько монет из топ-100 выросли за сутки"><small data-i18n="risingNow">Растут за 24 ч</small><b id="g-rising">—</b><em class="flat" id="g-rising-share"></em></a>
-          <a class="hide-s" href="/charts/" title="Доля монет из топ-50 (без стейблкоинов), выросших за 7 дней сильнее BTC"><small data-i18n="altSeason">Альтсезон · 7 д</small><b id="g-alt">—</b><em class="flat" id="g-alt-label"></em></a>
+          <a class="hm-mini" href="/screener/heatmap/"><small data-i18n="heatmap">Тепловая карта</small><span class="hm-mini-map" id="hm-mini"></span></a>
         </div>
       </article>
       <article class="card list"><h2><a href="#coins" data-tab="trending"><span>🔥 <span data-i18n="trending">В тренде</span></span> <i>›</i></a></h2><ol id="trending"></ol></article>
@@ -118,13 +116,13 @@
     <a class="right" href="/nir/" data-i18n="aboutNir">О блокчейне NIR →</a>
   </footer>
   <nav class="tabbar" aria-label="Меню">
-    <a href="/charts/" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
+    <a href="/" data-tab="top" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/></svg><span data-i18n="barMarkets">Рынки</span></a>
     <a href="#coins" data-tab="watch" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg><span data-i18n="tabWatch">Избранное</span></a>
     <a href="/portfolio/" data-member hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v9h9A9 9 0 1 1 12 3z"/><path d="M15 3.5A9 9 0 0 1 20.5 9H15z"/></svg><span data-i18n="navPortfolio">Портфель</span></a>
     <a href="/nir/#start"><img src="/nir-coin-icon.svg" alt="" width="24" height="24"><span data-i18n="barMine">Майнинг</span></a>
     <a href="/nir/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.5"/></svg><span data-i18n="navNir">О NIR</span></a>
   </nav>
-  <script src="/common.js?v=28"></script>
-  <script src="/markets.js?v=20"></script>
+  <script src="/common.js?v=29"></script>
+  <script src="/markets.js?v=21"></script>
 </body>
 </html>
