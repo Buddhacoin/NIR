@@ -94,7 +94,7 @@ export function normalizeTransaction(chain, item, native) {
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
   labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null, patoshi = null,
-  crawlGap = 400, crawlPages = 40 } = {}) {
+  crawlGap = 400, crawlPages = 400 } = {}) {
   const cache = new Map();
   const pending = new Map();
   let used = [];
@@ -383,7 +383,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     const key = address.toLowerCase();
     const first = crawl(address);
     if (!ledger.rows(address, 1).length) await Promise.race([first, new Promise((resolve) => { setTimeout(resolve, 6_000).unref?.(); })]);
-    const rows = ledger.rows(address, 6_000);
+    const rows = ledger.rows(address, 15_000);
     const index = new Map();
     const parties = [];
     const counts = new Map();
