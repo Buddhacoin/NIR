@@ -219,9 +219,13 @@ function draw() {
     group.append(text);
     const source = party.name || party.logo ? walletPicture({ ...party, address: item.address }) : null;
     if (source) {
+      // With a picture the name moves under the bubble, so the two never overlap.
       const image = svg("image", { href: source, x: -size, y: -size, width: size * 2, height: size * 2, "clip-path": clip(size), preserveAspectRatio: "xMidYMid slice" });
-      image.addEventListener("error", () => image.remove(), { once: true });
-      group.append(image);
+      const caption = svg("text", { class: "viz-caption", "text-anchor": "middle", y: (size + 14).toFixed(1) });
+      caption.textContent = inner(item);
+      text.style.display = "none";
+      image.addEventListener("error", () => { image.remove(); caption.remove(); text.style.display = ""; }, { once: true });
+      group.append(image, caption);
     }
     group.append(Object.assign(svg("title"), { textContent: label(item) }));
     return group;

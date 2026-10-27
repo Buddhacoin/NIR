@@ -1129,26 +1129,26 @@ html.touch { overscroll-behavior-y: contain; }
 .viz-chains { flex: 1 1 auto; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
 .viz-chains button { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .viz-chains .chain-dot { width: 14px; height: 14px; }
-.viz-stage { position: relative; height: min(72vh, 760px); padding: 0; overflow: hidden; background: #000; touch-action: none; }
+.viz-stage { position: relative; height: min(72vh, 760px); padding: 0; overflow: hidden; background: var(--viz-bg, #000); touch-action: none; }
 .viz-stage svg { display: block; width: 100%; height: 100%; cursor: grab; user-select: none; -webkit-user-select: none; }
 .viz-stage svg:active { cursor: grabbing; }
 .viz-edge { stroke-linecap: round; opacity: 0.6; }
 .viz-edge.in { stroke: #3fa877; }
 .viz-edge.out { stroke: #c45a63; }
 .viz-node { cursor: pointer; }
-.viz-node .viz-ring { fill: none; stroke: #ffffff26; stroke-width: 1.5; }
+.viz-node .viz-ring { fill: none; stroke: var(--viz-ring, #ffffff26); stroke-width: 1.5; }
 .viz-node.root .viz-ring { stroke: #3861fb; stroke-width: 3; }
 .viz-node.open .viz-ring { stroke: #8b7bff; stroke-width: 2.5; }
-.viz-node.on .viz-ring { stroke: #fff; stroke-width: 2.5; }
+.viz-node.on .viz-ring { stroke: var(--viz-text, #fff); stroke-width: 2.5; }
 .viz-node.busy .viz-ring { stroke-dasharray: 6 5; animation: viz-spin 1.2s linear infinite; }
 @keyframes viz-spin { to { stroke-dashoffset: -22; } }
-.viz-face { fill: #3a3f4b; }
-.viz-inner { fill: #e3e7ef; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; pointer-events: none; }
-.viz-status { position: absolute; top: 12px; left: 12px; margin: 0; padding: 6px 12px; border-radius: 999px; background: #141415cc; color: #8a93a6; font-size: 13px; pointer-events: none; }
+.viz-face { fill: var(--viz-face, #3a3f4b); }
+.viz-inner { fill: var(--viz-text, #e3e7ef); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; pointer-events: none; }
+.viz-status { position: absolute; top: 12px; left: 12px; margin: 0; padding: 6px 12px; border-radius: 999px; background: var(--viz-panel, #141415cc); color: #8a93a6; font-size: 13px; pointer-events: none; }
 .viz-zoom { position: absolute; right: 10px; top: 10px; display: grid; gap: 6px; }
-.viz-zoom .pill { width: 34px; height: 34px; padding: 0; justify-content: center; background: #141415cc; color: #eef1f6; border-color: #ffffff22; }
-.viz-card { position: absolute; left: 10px; bottom: 10px; width: min(340px, calc(100% - 20px)); padding: 12px; border: 1px solid #ffffff1f; border-radius: 16px;
-  background: #141415e6; color: #eef1f6; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.viz-zoom .pill { width: 34px; height: 34px; padding: 0; justify-content: center; background: var(--viz-panel, #141415cc); color: var(--viz-text, #eef1f6); border-color: var(--viz-ring, #ffffff22); }
+.viz-card { position: absolute; left: 10px; bottom: 10px; width: min(340px, calc(100% - 20px)); padding: 12px; border: 1px solid var(--viz-ring, #ffffff1f); border-radius: 16px;
+  background: var(--viz-panel, #141415e6); color: var(--viz-text, #eef1f6); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
 .viz-card-head { display: flex; align-items: center; gap: 10px; }
 .viz-card-head > div { display: grid; flex: 1; min-width: 0; }
 .viz-card-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1310,3 +1310,17 @@ html.touch { overscroll-behavior-y: contain; }
 }
 /* Nothing scrolls behind an open dialog or sheet. */
 body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidden; }
+/* Phones: the back button (common.js addBackButton); the logo keeps its picture only, to leave it room. */
+.top .back { display: none; }
+@media (max-width: 700px) {
+  .top .back { display: grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; }
+  .top .back svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  body.inner-page .top .brand { gap: 0; font-size: 0; }
+  body.inner-page .top .brand small, body.inner-page .viz-head #back { display: none; }
+}
+/* The bubbles: a name under a bubble with a picture, and a light stage in the day theme. */
+.viz-caption { fill: var(--viz-text, #e3e7ef); font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--viz-bg, #000); stroke-width: 3px; pointer-events: none; }
+:root[data-theme="light"] { --viz-bg: #f3f5f9; --viz-face: #d6dce7; --viz-text: #1b2230; --viz-ring: #0000002b; --viz-panel: #ffffffe6; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --viz-bg: #f3f5f9; --viz-face: #d6dce7; --viz-text: #1b2230; --viz-ring: #0000002b; --viz-panel: #ffffffe6; }
+}

@@ -513,6 +513,41 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") for (const box of document.querySelectorAll(".menu-item.open")) box.classList.remove("open");
 });
 
+// The hints on buttons and the names of page regions (read out by screen readers), in English.
+const LABELS_EN = {
+  "Разделы": "Sections", "Тема": "Theme", "Поиск": "Search", "Мои разделы": "My sections", "Меню": "Menu", "Монета": "Coin",
+  "Уведомление о цене": "Price alert", "Токен: USDC, ETH…": "Token: USDC, ETH…", "Имя или адрес": "Name or address", "Страницы": "Pages",
+  "Скрыть баланс": "Hide balance", "Система": "System", "Сеть сейчас": "Network now", "Связи кошелька": "Wallet links", "Рынок": "Market",
+  "Разделы профиля": "Profile sections", "Разделы монеты": "Coin sections", "Линия": "Line", "Изменить": "Edit", "Избранное": "Watchlist",
+  "Ещё": "More", "Добавить сделку": "Add transaction", "Быстрые ссылки": "Quick links", "Назад": "Back",
+};
+function translateLabels() {
+  for (const attribute of ["aria-label", "title", "placeholder"]) {
+    for (const element of document.querySelectorAll(`[${attribute}]`)) {
+      const key = `ru${attribute.replace(/-./, (part) => part[1].toUpperCase()).replace(/^./, (first) => first.toUpperCase())}`;
+      const original = element.dataset[key] ?? element.getAttribute(attribute);
+      if (!LABELS_EN[original]) continue;
+      element.dataset[key] = original;
+      element.setAttribute(attribute, language === "en" ? LABELS_EN[original] : original);
+    }
+  }
+}
+
+function addBackButton() {
+  const top = document.querySelector(".top");
+  if (!top || top.querySelector(".back")) return;
+  const back = Object.assign(document.createElement("button"), { type: "button", className: "pill back" });
+  back.setAttribute("aria-label", "Назад");
+  back.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+  // Back where the visitor came from on this site; from outside (a shared link), to the home page.
+  back.addEventListener("click", () => {
+    if (history.length > 1 && document.referrer.startsWith(location.origin)) history.back();
+    else location.href = "/";
+  });
+  top.prepend(back);
+  document.body.classList.add("inner-page");
+}
+
 function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) {
   const en = { navScreener: "Screeners", ...own }; // words every page's header shares
   accountChanged = onAccount;
@@ -524,6 +559,7 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
   function applyLanguage() {
     document.documentElement.lang = language;
     renderMenu();
+    translateLabels();
     document.title = language === "en" && en.docTitle ? en.docTitle : ruTitle;
     for (const node of textNodes) node.textContent = (language === "en" ? en : ru)[node.dataset.i18n] ?? node.textContent;
     search.placeholder = language === "en" ? en.search : ruPlaceholder;
@@ -549,6 +585,8 @@ function setupPage({ en: own, render, onTheme = () => {}, onAccount = render }) 
     renderTheme();
     onTheme();
   });
+  // Phones: a back button on every page but the home page, where the logo's name gives it room.
+  if (location.pathname !== "/") addBackButton();
   renderTheme();
   applyLanguage();
   // A row of section tabs wider than the screen shows the open one.
