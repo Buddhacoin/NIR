@@ -20,6 +20,7 @@ import { createLiquidations } from "./market-liquidations.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
 import { createPrices } from "./market-prices.mjs";
+import { createMasks } from "./market-masks.mjs";
 
 const args = process.argv.slice(2);
 const fixtureAt = args.indexOf("--fixture");
@@ -52,7 +53,11 @@ const catalogue = { optimism: "optimism", base: "base", arbitrum: "arbitrum", po
 const logos = env.NIR_MARKET_DB ? createLogos({ dir: join(dirname(env.NIR_MARKET_DB), "logos"),
   catalogue: (network) => catalogue[network] ?? (network === "eth" ? chain.platform(1) : null) }) : null;
 const ledger = createLedger({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "transfers.db") : ":memory:" });
-const chain = createChain({ nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
+// Known wallets go out under ids, their addresses kept here (market-masks.mjs); the hand-picked ones and
+// their readable ids come from data/featured-wallets.json.
+const featured = (() => { try { return JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "data", "featured-wallets.json"), "utf8")); } catch { return {}; } })();
+const masks = createMasks({ file: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "masks.db") : ":memory:", featured });
+const chain = createChain({ masks, nativePrice: (symbol) => service.state.coins.find((coin) => coin.symbol === symbol)?.price ?? null,
   labelFor: (address) => accounts?.labelFor(address) ?? null, namesFile, logos,
   // OpenSea profiles when OPENSEA_API_KEY is set in /etc/nir-market.env (market-opensea.mjs).
   opensea: createOpenSea({ key: env.OPENSEA_API_KEY, get: fetchExplorer }),

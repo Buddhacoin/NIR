@@ -173,12 +173,11 @@ const amountHead = (base) => (cfg.usd ? `${t().sum} (${cfg.quote === "BTC" ? "BT
 function renderStep(first) {
   const select = $("#step");
   if (!select || !first) return;
-  const shown = view({ ...first, bids: first.bids.slice(0, 60), asks: first.asks.slice(0, 60) });
-  const tick = cfg.step ? null : 10 ** -shown.digits;
-  const base = tick ?? Number(select.dataset.tick || 0);
-  if (!base) return;
-  select.dataset.tick = String(base);
+  // The exchange's own tick from its raw prices, whatever step is chosen (a saved step must not leave the list empty).
+  const digits = Math.min(8, Math.max(0, ...[...first.bids, ...first.asks].slice(0, 60).map(([price]) => decimalsOf(price))));
+  const base = 10 ** -digits;
   const steps = [1, 10, 50, 100, 500, 1000, 5000, 10000].map((times) => Number((base * times).toPrecision(6))).filter((step) => step < first.price / 20);
+  if (cfg.step && !steps.includes(cfg.step)) steps.push(cfg.step);
   const key = steps.join(",");
   if (select.dataset.key !== key) {
     select.dataset.key = key;

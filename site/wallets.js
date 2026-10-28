@@ -61,8 +61,8 @@ const sort = { key: null, dir: 0 };
 // The rows of the chosen list: the hand-picked wallets, or a group from the open labels.
 function rowsOf() {
   const lang = language === "en" ? "en" : "ru";
-  const featured = () => WHALES.map((item) => ({ address: item.address, name: item.name, kind: item.kind[lang], logo: null }));
-  const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+  const featured = () => WHALES.map((item) => ({ address: item.address, short: item.short, name: item.name, kind: item.kind[lang], logo: null }));
+  const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address, item.short), short: item.short,
     // Whales: how much went through and what the book knows of them; finds: marked as found by behaviour.
     kind: key === "whales" ? [t().moved(item.moved), categoryName(item.category), item.entity, item.guessed ? t().byBehaviour : null].filter(Boolean).join(" · ")
       : key === "found" ? [categoryName(item.category), item.entity, t().byBehaviour].filter(Boolean).join(" · ")
@@ -91,7 +91,7 @@ function render() {
   // Wallets the open labels know by that name, beyond the lists loaded so far (BlackRock, a fund's wallet…).
   if (needle && found.query === needle) {
     const have = new Set(shown.map((item) => item.address.toLowerCase()));
-    shown.push(...found.items.filter((item) => !have.has(item.address.toLowerCase())).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+    shown.push(...found.items.filter((item) => !have.has(item.address.toLowerCase())).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address, item.short), short: item.short,
       kind: item.entity ?? (item.contract ? t().contract : t().wallet), logo: item.logo ?? null })));
   }
   const rows = sortBy(shown, sort, (item) => balances.get(item.address)?.total ?? null);
@@ -110,7 +110,7 @@ function render() {
     const mobile = node("small", "w-mobile-balance", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total));
     const label = node("span", "w-label");
     label.append(node("b", "", item.name), mobile);
-    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), label, node("span", "muted w-short", shortAddress(item.address)));
+    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), label, node("span", "muted w-short", shortAddress(item.address, item.short)));
     who.append(link);
     const networks = node("td", "left");
     networks.append(...(balance?.chains ?? []).map((chain) => chainDot(chain)));
@@ -151,6 +151,10 @@ async function loadGroup(asked = group) {
     list.items.push(...answer.items);
     list.next = answer.next;
     list.done = !answer.next;
+  } else if ((list.failed = (list.failed ?? 0) + 1) <= 3) {
+    // A failed answer is asked again a little later, the list showing it is loading meanwhile.
+    list.loading = true;
+    setTimeout(() => { list.loading = false; void loadGroup(asked); }, 4000 * list.failed);
   }
   render();
 }
@@ -240,7 +244,7 @@ $("#filter").addEventListener("input", (event) => {
   findTimer = setTimeout(async () => {
     const answer = await fetch(`/market/chain/search?q=${encodeURIComponent(needle)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
     if (needle !== query.toLowerCase()) return;
-    Object.assign(found, { query: needle, items: (answer?.results ?? []).filter((item) => /^0x[0-9a-fA-F]{40}$/.test(item.address)) });
+    Object.assign(found, { query: needle, items: (answer?.results ?? []).filter((item) => /^(?:0x[0-9a-fA-F]{40}|w:[a-z0-9-]{2,40})$/.test(item.address)) });
     render();
   }, 300);
 });

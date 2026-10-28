@@ -39,7 +39,8 @@ function money(value) {
 }
 
 const root = new URLSearchParams(location.search).get("address")?.trim() ?? "";
-const utxo = /^(?:bc1|[13])/.test(root);
+// A known wallet by its id: its network from the half address the page knows.
+const utxo = /^(?:bc1|[13])/.test(WHALE.get(root)?.short ?? root);
 // An organisation's bubbles (?address=entity:<name>): the organisation in the middle, its addresses kept back.
 const entity = /^entity:.{2,60}$/.test(root) ? root.slice(7) : null;
 const pageOf = (address) => (address.startsWith("entity:") ? entityUrl(address.slice(7)) : addressUrl(address));

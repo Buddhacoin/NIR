@@ -6,6 +6,7 @@
 // store(items) → how many were new; rows(address, limit) → the wallet's transfers, newest first;
 // crawled(address, chain) / markCrawled(address, chain, cursor, done) → how far the crawler got.
 import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
 
 const lower = (value) => String(value ?? "").toLowerCase();
 
@@ -86,5 +87,12 @@ export function createLedger({ file = ":memory:", now = Date.now, cap = 3_000_00
       UNION ALL SELECT receiver AS address, usd FROM transfers WHERE time > ? AND usd IS NOT NULL)
     GROUP BY address ORDER BY usd DESC LIMIT ?`);
   const busiest = (since = 0, limit = 100) => busiestSince.all(since, since, limit).map((row) => ({ address: row.address, usd: Number(row.usd), transfers: Number(row.n) }));
-  return { store, rows, crawled, markCrawled, size, singleReceivers, sent: sentCount, busiest, close: () => db.close() };
+  // The same count off the main thread (a store in a file); an in-memory store counts here.
+  const busiestLater = (since = 0, limit = 100) => (file === ":memory:" ? Promise.resolve(busiest(since, limit)) : new Promise((resolve, reject) => {
+    const worker = new Worker(new URL("./market-ledger-busiest.mjs", import.meta.url), { workerData: { file, since, limit } });
+    worker.once("message", resolve);
+    worker.once("error", reject);
+    worker.once("exit", (code) => { if (code) reject(new Error(`busiest worker exited ${code}`)); });
+  }));
+  return { store, rows, crawled, markCrawled, size, singleReceivers, sent: sentCount, busiest, busiestLater, close: () => db.close() };
 }

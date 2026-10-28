@@ -78,8 +78,10 @@ const words = {
     signInSuggest: "Sign in with Google to suggest names." },
 };
 const t = () => words[language];
-const address = decodeURIComponent(location.pathname.split("/")[2] ?? "");
-const utxo = /^(?:bc1|[13])/.test(address);
+// A known wallet's page is /w/<id>: its address stays on the server, only its first half is shown.
+const address = (location.pathname.startsWith("/w/") ? "w:" : "") + decodeURIComponent(location.pathname.split("/")[2] ?? "");
+const masked = MASKED_ID.test(address);
+let utxo = /^(?:bc1|[13])/.test(WHALE.get(address)?.short ?? address);
 let data = null;
 let failure = "";
 let saved = null; // this address in the visitor's saved list, or null
@@ -104,7 +106,7 @@ const node = (tag, className = "", text = "") => Object.assign(document.createEl
 const chainName = (chain) => CHAINS[chain]?.name ?? chain;
 // Networks where the address left a trace, and the explorer pages to look further.
 const activeChains = () => (data?.networks ?? []).filter((item) => item.ok && item.active).map((item) => item.chain);
-const explorerLinks = () => activeChains().map((chain) => Object.assign(node("a", "pill", chainName(chain)),
+const explorerLinks = () => (masked ? [] : activeChains()).map((chain) => Object.assign(node("a", "pill", chainName(chain)),
   { href: `${(CHAINS[chain]?.tx ?? "").replace(/\/tx\/$/, "/address/")}${address}`, target: "_blank", rel: "noopener" }));
 const COLORS = ["#3861fb", "#16c784", "#f3a12f", "#8b7bff", "#ea3943", "#2ee6a6", "#f7931a", "#00b8d9", "#c05cff", "#9aa4b5"];
 
@@ -144,7 +146,9 @@ function renderHead() {
   const name = data.name ?? (data.contract ? t().contract : t().wallet);
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;
-  $("#address").textContent = address;
+  $("#address").textContent = masked ? data.short ?? "" : address;
+  $("#copy").hidden = masked;
+  $("#suggest").hidden = masked;
   $("#visualize").href = bubblesUrl(address);
   if (!$("#visualize svg")) $("#visualize").insertAdjacentHTML("afterbegin", BUBBLES_ICON);
   const hue = [...address.toLowerCase()].reduce((sum, char) => sum + char.charCodeAt(0) * 13, 0) % 360;
@@ -670,6 +674,8 @@ async function load() {
   const response = await fetch(`/market/chain/address/${encodeURIComponent(address)}`).catch(() => null);
   if (!response?.ok) { failure = t().unavailable; render(); return; }
   data = await response.json();
+  // A known wallet asked by its id: its network comes with the answer.
+  if (masked && data.kind === "utxo") { utxo = true; transferChain = "btc"; }
   render();
   await loadTransfers(true);
   void reachBack();
