@@ -86,6 +86,57 @@ async function send(path, method, body) {
   return response ? { status: response.status, data: await response.json().catch(() => ({})) } : { status: 0, data: {} };
 }
 const signInUrl = () => `/market/auth/google?return=${encodeURIComponent(location.pathname + location.search)}`;
+// "Add to a portfolio": a sheet with the visitor's portfolios (a wallet is in one at most), a new one, only
+// tracking it, or taking it off. `done(saved)` gets the visitor's saved wallets after a change.
+async function portfolioSheet(address, done = () => {}) {
+  const en = language === "en";
+  const words = en ? { title: "Add to portfolio", track: "Just track, no portfolio", fresh: "+ New portfolio", ask: "Portfolio name", remove: "Stop tracking",
+    close: "Close", added: (name) => `Added to “${name}”`, tracked: "Tracking", removed: "Removed", first: "Main", signIn: "Sign in with Google to keep wallets." }
+    : { title: "Добавить в портфель", track: "Только следить, без портфеля", fresh: "＋ Новый портфель", ask: "Название портфеля", remove: "Перестать следить",
+      close: "Закрыть", added: (name) => `Добавлено в «${name}»`, tracked: "Слежу", removed: "Убрано", first: "Основной", signIn: "Войдите через Google, чтобы сохранять кошельки." };
+  if (!account.user) { if (account.signIn) location.href = signInUrl(); else alert(words.signIn); return; }
+  const mine = await send("/market/me/addresses", "GET");
+  if (mine.status !== 200) return;
+  let { addresses, portfolios } = mine.data;
+  const current = addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
+  document.querySelector(".pick-sheet")?.remove();
+  const sheet = Object.assign(document.createElement("div"), { className: "pick-sheet" });
+  const panel = Object.assign(document.createElement("div"), { className: "pick-sheet-panel" });
+  const close = () => sheet.remove();
+  sheet.addEventListener("click", (event) => { if (event.target === sheet) close(); });
+  const say = (text) => {
+    const note = Object.assign(document.createElement("div"), { className: "toast good", textContent: text });
+    document.body.append(note);
+    setTimeout(() => note.remove(), 2500);
+  };
+  const act = async (method, body, text) => {
+    const answer = await send(`/market/me/addresses/${encodeURIComponent(address)}`, method, body);
+    if (answer.status !== 200) { alert(answer.data?.error ?? "error"); return; }
+    close();
+    say(text);
+    done(answer.data);
+  };
+  const row = (label, on, click, className = "") => {
+    const button = Object.assign(document.createElement("button"), { type: "button", className: `${className}${on ? " on" : ""}` });
+    button.append(label, ...(on ? [Object.assign(document.createElement("span"), { textContent: "✓" })] : []));
+    button.addEventListener("click", click);
+    return button;
+  };
+  panel.append(Object.assign(document.createElement("b"), { textContent: words.title }),
+    ...portfolios.map((item) => row(item.name, current?.portfolioId === item.id, () => act("PUT", { portfolioId: item.id }, words.added(item.name)))),
+    row(words.fresh, false, async () => {
+      const name = prompt(words.ask, portfolios.length ? "" : words.first)?.trim();
+      if (!name) return;
+      const made = await send("/market/me/wallet-portfolios", "POST", { name });
+      if (made.status !== 200) { alert(made.data?.error ?? "error"); return; }
+      await act("PUT", { portfolioId: made.data.id }, words.added(name));
+    }, "fresh"),
+    row(words.track, Boolean(current) && current.portfolioId === null, () => act("PUT", { mine: false, portfolioId: null }, words.tracked)),
+    ...(current ? [row(words.remove, false, () => act("DELETE", undefined, words.removed), "danger")] : []),
+    row(words.close, false, close, "ghost"));
+  sheet.append(panel);
+  document.body.append(sheet);
+}
 async function loadAccount() {
   const response = await fetch("/market/me", { cache: "no-store" }).catch(() => null);
   if (!response?.ok) return;
@@ -939,7 +990,7 @@ function setupSearch({ overview = () => null }) {
   let pull = 0;
   const reset = () => { start = null; pull = 0; mark.style.transform = ""; mark.classList.remove("ready", "show"); };
   window.addEventListener("touchstart", (event) => {
-    if (window.scrollY > 0 || event.touches.length > 1 || document.body.classList.contains("searching") || event.target.closest?.(".pf-sheet, dialog, .table-wrap, textarea, input, #stage, .suggest, .sc-tabs, .hm")) return;
+    if (window.scrollY > 0 || event.touches.length > 1 || document.body.classList.contains("searching") || event.target.closest?.(".pf-sheet, .pick-sheet, dialog, .table-wrap, textarea, input, #stage, .suggest, .sc-tabs, .hm")) return;
     start = { x: event.touches[0].clientX, y: event.touches[0].clientY };
   }, { passive: true });
   window.addEventListener("touchmove", (event) => {
