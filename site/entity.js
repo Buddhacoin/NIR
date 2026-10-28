@@ -10,7 +10,7 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   portfolio: "Portfolio", transfers: "Transfers", colAsset: "Asset", colAmount: "Amount", colValue: "Value", colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →", share: "Share",
 };
 const words = {
   ru: { addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
@@ -148,6 +148,14 @@ async function loadSaved() {
 }
 
 $("#follow").addEventListener("click", () => void follow());
+// The organisation's page shared as a link (the phone's share sheet, else copied).
+$("#share").addEventListener("click", async () => {
+  if (navigator.share) { await navigator.share({ title: document.title, url: location.href }).catch(() => {}); return; }
+  await navigator.clipboard?.writeText(location.href).catch(() => {});
+  const label = $("#share").textContent;
+  $("#share").textContent = language === "en" ? "Link copied" : "Ссылка скопирована";
+  setTimeout(() => { $("#share").textContent = label; }, 1500);
+});
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");
   if (document.body.classList.contains("searching")) $("#search").focus();
