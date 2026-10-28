@@ -10,7 +10,7 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   portfolio: "Portfolio", transfers: "Transfers", colAsset: "Asset", colAmount: "Amount", colValue: "Value", colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →", share: "Share",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →", share: "Share", visualize: "Wallet links",
 };
 const words = {
   ru: { addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
@@ -148,6 +148,8 @@ async function loadSaved() {
 }
 
 $("#follow").addEventListener("click", () => void follow());
+// The organisation's bubbles: its links as one wallet (the visualizer takes entity:<name>).
+$("#visualize").href = `/visualizer/?address=${encodeURIComponent(key)}`;
 // The organisation's page shared as a link (the phone's share sheet, else copied).
 $("#share").addEventListener("click", async () => {
   if (navigator.share) { await navigator.share({ title: document.title, url: location.href }).catch(() => {}); return; }

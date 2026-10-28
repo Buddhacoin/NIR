@@ -68,6 +68,10 @@ A wallet's holdings and coin charts join the kept answers (a partial wallet answ
 
 What is chosen (tabs, switches, pressed pills) has one look across the site: the button colour with white letters — blue at night, black by day; a table's own tabs keep their quiet look. The browser tab's icon is the worn N on black, as on the home screen. A profile's tracked wallets' sum stands in its Portfolio panel ("Total"), not beside the owner's name, where it read as the visitor's own money. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
 
+## An organisation's bubbles
+
+`/visualizer/?address=entity:<name>` draws an organisation as one bubble in the middle with the wallets its members dealt with (`GET /market/chain/address/entity:<name>/links`, market-chain.mjs `entityLinks`): its members' transfers from the store, transfers between its own wallets left out, its addresses never given out; members not yet in the store are read in the background, a few at a time (Satoshi Nakamoto: his first block's address, where the keepsakes go). The organisation page has the bubbles, follow (a bell on phones) and share.
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the

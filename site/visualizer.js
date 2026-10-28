@@ -40,6 +40,9 @@ function money(value) {
 
 const root = new URLSearchParams(location.search).get("address")?.trim() ?? "";
 const utxo = /^(?:bc1|[13])/.test(root);
+// An organisation's bubbles (?address=entity:<name>): the organisation in the middle, its addresses kept back.
+const entity = /^entity:.{2,60}$/.test(root) ? root.slice(7) : null;
+const pageOf = (address) => (address.startsWith("entity:") ? entityUrl(address.slice(7)) : addressUrl(address));
 const lower = (address) => String(address ?? "").toLowerCase();
 const filters = { limit: 100, order: "usd", min: 1, chain: "all" };
 let chains = []; // networks the root wallet is active on
@@ -65,7 +68,7 @@ async function loadWallet(address, pages, round = 0) {
   loading.add(key);
   if (!round) render();
   const answer = await fetch(`/market/chain/address/${encodeURIComponent(address)}/links`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
-  if (!answer) { await loadPages(address, pages); return; }
+  if (!answer) { if (address.startsWith("entity:")) { loading.delete(key); failure = t().none; render(); } else await loadPages(address, pages); return; }
   for (const party of answer.parties) {
     const known = parties.get(party.address);
     parties.set(party.address, { ...known, address: known?.address ?? party.address, name: party.name ?? known?.name ?? knownName(party.address), logo: party.logo ?? known?.logo });
@@ -198,7 +201,7 @@ function label(item) {
 }
 function draw() {
   $("#status").hidden = Boolean(shown.edges.length) && !failure;
-  $("#status").textContent = failure || (loading.size ? t().loadingMore : !ADDRESS.test(root) ? t().missing : shown.edges.length ? "" : t().none);
+  $("#status").textContent = failure || (loading.size ? t().loadingMore : !ADDRESS.test(root) && !entity ? t().missing : shown.edges.length ? "" : t().none);
   if (loading.size && shown.edges.length) { $("#status").hidden = false; $("#status").textContent = t().loadingMore; }
   $("#edges").replaceChildren(...shown.edges.flatMap((edge) => {
     const flows = [...edge.flows].sort((left, right) => right.time - left.time).slice(0, MAX_LINES);
@@ -442,7 +445,7 @@ function renderCard() {
     more.addEventListener("click", () => { void toggle(item.key); });
     actions.append(more);
   }
-  actions.append(Object.assign(node("a", "act ghost", t().open), { href: addressUrl(item.address) }));
+  actions.append(Object.assign(node("a", "act ghost", t().open), { href: pageOf(item.address) }));
   if (item.key !== lower(root)) actions.append(Object.assign(node("a", "act ghost", t().center), { href: `/visualizer/?address=${encodeURIComponent(item.address)}` }));
   card.replaceChildren(head, facts, actions);
 }
@@ -451,7 +454,7 @@ function renderCard() {
 function render() {
   document.title = t().title(rootInfo?.name ?? shortAddress(root));
   $("#root-name").textContent = rootInfo?.name ?? shortAddress(root);
-  $("#back").href = ADDRESS.test(root) ? addressUrl(root) : "/wallets/";
+  $("#back").href = ADDRESS.test(root) || entity ? pageOf(root) : "/wallets/";
   $("#limit").textContent = t().limit(filters.limit);
   $("#order").textContent = filters.order === "usd" ? t().byUsd : t().byTime;
   $("#min-usd").textContent = t().min(filters.min);
@@ -472,6 +475,15 @@ $("#find").addEventListener("click", () => {
 });
 
 async function start() {
+  if (entity) {
+    expanded.push(lower(root));
+    rootInfo = { name: entity, logo: null };
+    parties.set(lower(root), { address: root, ...rootInfo });
+    layout();
+    render();
+    await loadWallet(root, 0);
+    return;
+  }
   if (!ADDRESS.test(root)) { render(); return; }
   expanded.push(lower(root));
   layout();

@@ -458,6 +458,34 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         token: { address: null, symbol: row.symbol ?? "", name: row.symbol ?? "", icon: null, price: null },
         from: own.has(row.from) ? self : named({ address: row.from }), to: own.has(row.to) ? self : named({ address: row.to }) }));
   }
+  // An organisation's links for the bubbles (/visualizer/?address=entity:<name>): its members' transfers from the
+  // store, with the organisation as one bubble in the middle (its addresses are not given out), transfers between
+  // its own wallets left out. Members without stored transfers are read in the background, a few at a time.
+  function entityLinks(name) {
+    const satoshi = /^satoshi nakamoto$/i.test(name) && patoshi;
+    const members = satoshi ? ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"] : entityJob(name, []).members.slice(0, 80);
+    const own = new Set(members.map((address) => address.toLowerCase()));
+    let started = 0;
+    for (const address of members) if (!ledger.rows(address, 1).length && !crawlActive.has(address.toLowerCase()) && started++ < 6) void crawl(address);
+    const index = new Map();
+    const parties = [];
+    const rows = [];
+    const seen = new Set();
+    for (const address of members) {
+      for (const row of ledger.rows(address, 3_000)) {
+        if (seen.has(row.id) || own.has(row.from) === own.has(row.to)) continue;
+        seen.add(row.id);
+        const incoming = own.has(row.to);
+        const other = incoming ? row.from : row.to;
+        if (!index.has(other)) { index.set(other, parties.length); parties.push(other); }
+        rows.push([row.time, row.chain, index.get(other), incoming ? 1 : 0, row.usd === null ? null : Math.round(row.usd * 100) / 100]);
+      }
+    }
+    return { crawling: members.some((address) => crawlActive.has(address.toLowerCase())), parties: parties.map((other) => {
+      const party = named({ address: other });
+      return { address: other, name: party.name ?? null, logo: party.logo ?? null };
+    }), rows: rows.sort((left, right) => right[0] - left[0]).slice(0, 15_000) };
+  }
   function entitySummary(name, extra = []) {
     const category = names.entityCategory(name);
     // Satoshi Nakamoto: his early blocks' coins, read key by key (market-patoshi.mjs).
@@ -693,6 +721,11 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         for (const address of asked) followTotal(address);
         return reply(response, 200, { totals: Object.fromEntries(asked.map((address) => [address, totals.get(address) ?? null])) }, 30), true;
       }
+      // GET /market/chain/address/entity:<name>/links: an organisation's links for the bubbles (entityLinks).
+      let plainPath = path;
+      try { plainPath = decodeURIComponent(path); } catch {}
+      const entityMatch = ledger && /^\/market\/chain\/address\/entity:([^/]{2,60})\/links$/.exec(plainPath);
+      if (entityMatch) return reply(response, 200, entityLinks(entityMatch[1].trim()), 10), true;
       const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history|links))?$/.exec(path);
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
