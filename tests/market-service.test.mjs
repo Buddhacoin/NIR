@@ -553,3 +553,28 @@ test("search engines get a site map with every coin and a coin page with its nam
   assert.match(unknown, /<title>Монета — NIR Markets<\/title>/);
   assert.match(unknown, /<link rel="canonical" href="https:\/\/nircoin\.com\/coin\/beta">/);
 });
+
+test("the site's own prices: the exchanges' spot markets that agree, weighted by volume, laid over the list; CoinPaprika stands in", async () => {
+  const { combine, createPrices, readPaprika, readTickers } = await import("../blockchain/market-prices.mjs");
+  const quote = "U" + "SDT";
+  assert.equal(readTickers("okx", { data: [{ instId: `ALP-${quote}`, last: "10", open24h: "9", vol24h: "100" }] })[0].volume, 1000);
+  // A market far from the others (another coin under the same ticker) is left out.
+  const combined = combine([{ price: 10, open: 9, volume: 300 }, { price: 10.1, open: 9, volume: 100 }, { price: 15, open: 14, volume: 1e6 }]);
+  assert.equal(combined.markets, 2);
+  assert.equal(combined.price, 10.025);
+  const answers = { okx: { data: [{ instId: `ALP-${quote}`, last: "10", open24h: "8", vol24h: "10" }] }, gate: [{ currency_pair: `ALP_${quote}`, last: "10", change_percentage: "25", quote_volume: "100" }] };
+  const prices = createPrices({ get: async (url) => answers[url.includes("okx") ? "okx" : url.includes("gate") ? "gate" : "none"] ?? null, now: () => 1_000 });
+  await prices.refresh();
+  const [alpha, beta, unit] = prices.overlay([{ symbol: "ALP", price: 9.8, circulating: 100, marketCap: 980, change24h: 1 },
+    { symbol: "BET", price: 5, marketCap: 50, change24h: 2 }, { symbol: quote, price: 0.999, marketCap: 1, change24h: 0 }]);
+  assert.equal(alpha.price, 9.99, "in dollars at the stablecoin's own price");
+  assert.equal(alpha.marketCap, 999);
+  assert.equal(Math.round(alpha.change24h), 25);
+  assert.equal(beta.price, 5, "a coin no exchange quotes keeps the list's price");
+  assert.equal(unit.price, 0.999);
+  // Far from the list's own price: not taken.
+  assert.equal(prices.overlay([{ symbol: "ALP", price: 20, marketCap: 1 }])[0].price, 20);
+  const rows = readPaprika([{ rank: 1, symbol: "ALP", name: "Alpha", quotes: { USD: { price: 3, percent_change_24h: 1, market_cap: 30, volume_24h: 5 } }, circulating_supply: 10 },
+    { rank: 2, symbol: "NEW", name: "New Coin", quotes: { USD: { price: 1 } } }], [{ id: "alpha-coin", symbol: "ALP", name: "Alpha", image: "x", sparkline: [1, 2] }]);
+  assert.deepEqual(rows.map((row) => [row.id, row.price, row.image]), [["alpha-coin", 3, "x"], ["new-coin", 1, null]]);
+});

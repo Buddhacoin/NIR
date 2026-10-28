@@ -21,6 +21,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { createTrades } from "./market-trades.mjs";
 import { coinPage, siteBase, sitemap } from "./market-seo.mjs";
+import { PAPRIKA, readPaprika } from "./market-prices.mjs";
 
 const COINGECKO = "https://api.coingecko.com/api/v3";
 const FEAR_GREED = "https://api.alternative.me/fng/?limit=1";
@@ -279,10 +280,14 @@ function createOnDemand({ get, now, perMinute, maxEntries, blocked = () => false
 }
 
 export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000, now = Date.now,
-  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, liquidations = null, book = null, cacheFile = null, coinTemplate = () => null } = {}) {
+  coinFetchesPerMinute = 20, accounts = null, chain = null, communityMs = 45_000, trades = createTrades({ get, now }), screener = null, densities = null, liquidations = null, book = null, cacheFile = null, coinTemplate = () => null, prices = null } = {}) {
   // Coin pages and charts fetched before are kept on disk (cache.db), so a restart does not empty them.
   const keep = cacheFile ? createDiskCache(cacheFile) : null;
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
+  // The last good market list, kept on disk: a restart while the sources are down still opens with it.
+  try { const kept = keep?.load("market:coins"); if (kept?.value?.length) { state.coins = kept.value; state.updatedAt = kept.at; } } catch {}
+  // The coins with the exchanges' own prices laid over the list's (market-prices.mjs), as the visitors see them.
+  const live = () => (prices ? prices.overlay(state.coins) : state.coins);
   const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
     coins: [`${COINGECKO}/coins/markets?vs_currency=usd&precision=full&order=market_cap_desc&per_page=100&page=1` +
@@ -346,7 +351,19 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       }
     }));
     // "Updated" means the prices were read now: a failed read keeps the last time.
-    if (state.coins.length && !state.errors.coins) state.updatedAt = now();
+    if (state.coins.length && !state.errors.coins) {
+      state.updatedAt = now();
+      try { keep?.save("market:coins", { at: now(), value: state.coins }); } catch {}
+    } else if (state.errors.coins && (!state.coins.length || now() - (state.updatedAt ?? 0) > 5 * 60_000)) {
+      // CoinGecko down for five minutes (or never read): CoinPaprika's list stands in, matched to the known coins.
+      try {
+        const rows = readPaprika(await get(PAPRIKA), state.coins);
+        if (rows.length) { state.coins = rows; state.updatedAt = now(); state.errors.coinsFrom = "coinpaprika"; }
+      } catch (error) {
+        state.errors.paprika = String(error?.message ?? error).slice(0, 200);
+      }
+    }
+    if (!state.errors.coins) delete state.errors.coinsFrom;
     await trendingRows();
     await refreshExchangeLogos();
     if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
@@ -429,10 +446,11 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   }
 
   function overview() {
-    const movers = state.coins.filter((coin) => coin.change24h !== null)
+    const coins = live();
+    const movers = coins.filter((coin) => coin.change24h !== null)
       .sort((left, right) => right.change24h - left.change24h);
     return {
-      coins: state.coins, fearGreed: state.fearGreed, gainers: movers.slice(0, 5),
+      coins, fearGreed: state.fearGreed, gainers: movers.slice(0, 5),
       global: state.global, losers: movers.slice(-5).reverse(), source: "CoinGecko",
       trending: withoutLookalikes(state.trending, state.coins), trendingCoins: withoutLookalikes(state.trendingCoins, state.coins),
       updatedAt: state.updatedAt,
@@ -442,7 +460,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
 
   // GET /market/coins?page=N — pages after the first hundred coins, 100 a page, on demand.
   async function coinsPage(page) {
-    if (page === 1) return state.coins;
+    if (page === 1) return live();
     const entry = await onDemand(`coins:${page}`, `${COINGECKO}/coins/markets?vs_currency=usd&precision=full&order=market_cap_desc` +
       `&per_page=100&page=${page}&sparkline=true&price_change_percentage=1h,24h,7d`, normalizeCoins, 180_000);
     return entry.missing ? [] : entry.value;
@@ -461,7 +479,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   async function coinData(kind, id, days) {
     if (!COIN_ID.test(id) || (kind === "chart" && !CHART_DAYS.has(days))) return null;
     let entry;
-    const row = [...state.coins, ...state.trendingCoins].find((coin) => coin.id === id);
+    const row = [...live(), ...state.trendingCoins].find((coin) => coin.id === id);
     const stand = () => (kind === "coin" ? partialCoin(row) : weekChart(row));
     try {
       const fetching = kind === "coin"
@@ -481,7 +499,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (entry.missing) return null;
     // A kept copy can be minutes or hours old (CoinGecko busy, or read back from disk): the market list,
     // refreshed every minute, sets the figures the visitor sees, so the page never shows another price.
-    const fresh = row && state.updatedAt && now() - state.updatedAt < 300_000 && row.price !== null && now() - entry.at > 60_000 ? row : null;
+    const fresh = row && state.updatedAt && now() - state.updatedAt < 300_000 && row.price !== null && (now() - entry.at > 60_000 || row.source === "exchanges") ? row : null;
     if (kind !== "coin") return fresh ? withPrice(entry.value, fresh.price) : entry.value;
     if (entry.value.sentimentUp !== null) community.set(id, { up: entry.value.sentimentUp, at: now() });
     const value = fresh ? { ...entry.value, price: fresh.price, change1h: fresh.change1h, change24h: fresh.change24h, change7d: fresh.change7d,
@@ -592,7 +610,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       const template = coinTemplate();
       if (!template) return send(response, 404, { error: "not found" });
       const id = decodeURIComponent(url.pathname.slice("/market/page/coin/".length).split("/")[0] ?? "").toLowerCase();
-      const coin = COIN_ID.test(id) ? [...state.coins, ...state.trendingCoins].find((row) => row.id === id) ?? null : null;
+      const coin = COIN_ID.test(id) ? [...live(), ...state.trendingCoins].find((row) => row.id === id) ?? null : null;
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
       response.end(coinPage(template, siteBase(request.headers.host), COIN_ID.test(id) ? id : "", coin));
     } else if (request.method === "GET" && kind) {
@@ -614,6 +632,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     server, refresh, overview, state, communityTick,
     start() {
       void refresh();
+      prices?.start();
       timer = setInterval(() => { void refresh(); }, refreshMs);
       timer.unref?.();
       communityTimer = setInterval(() => { void communityTick(); }, communityMs);

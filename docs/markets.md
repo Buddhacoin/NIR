@@ -45,6 +45,10 @@ CoinGecko for prices and TradingView for charts.
 - On a phone a wallet's head is laid out as on the analytics apps: the picture beside the name, the actions as icons on that row, the networks in one row that scrolls.
 - CoinGecko's global figures: a zero market cap or volume (it sometimes answers so) keeps the last good one.
 
+## The site's own prices
+
+`blockchain/market-prices.mjs` reads the spot tickers of OKX, Gate, Bitget, KuCoin and Bybit every 20 seconds (one request each, no key). A coin's price is the volume-weighted average of the markets within 2 % of their median, turned into dollars at the stablecoin's own price; its day change from the same markets' prices a day ago. The market list, the coin pages and the sitemap take these over CoinGecko's figures where the exchanges agree with the list's price within 10 % (another coin under the same ticker stays out); the market cap follows the price (price × circulating supply). CoinGecko still gives the list itself, supply, descriptions, charts and trending. The last good list is kept in `cache.db`, so a restart while the sources are down opens with it; when CoinGecko has not answered for five minutes, CoinPaprika's free list (`/v1/tickers`) stands in, matched to the coins the site knows (their ids, pictures and week lines kept).
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the
