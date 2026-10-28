@@ -118,7 +118,7 @@ let entityCount = 0;
 let entityAsked = "";
 async function loadEntityCount() {
   const entity = data?.name ? entityName(data.name) : "";
-  if (!entity || entity === entityAsked) return;
+  if (!entity || GENERIC_LABEL.test(entity) || entity === entityAsked) return;
   entityAsked = entity;
   if (entity === "Satoshi Nakamoto") {
     const answer = await fetch("/market/chain/satoshi").then((response) => (response.ok ? response.json() : null)).catch(() => null);
@@ -143,6 +143,8 @@ function renderHead() {
     entityLink.append(node("span", "", t().addresses(entityCount)));
     entityLink.title = t().entityHint(entityName(data.name));
   }
+  // A hand-picked wallet whose labels give no name keeps the one the list shows.
+  if (!data.name && knownName(address)) data.name = knownName(address);
   const name = data.name ?? (data.contract ? t().contract : t().wallet);
   document.title = t().title(data.name ?? shortAddress(address));
   $("#name").textContent = name;
@@ -164,7 +166,8 @@ function renderHead() {
   }),
     ...data.tags.map((tag) => node("span", "ex-chip tag", tag)),
     // The owner's kind from NIR Markets' book; a guess from the wallet's behaviour says so.
-    ...(categoryName(data.category) ? [node("span", "ex-chip tag", data.guessed ? `${categoryName(data.category)} · ${t().guessed}` : categoryName(data.category))] : []));
+    ...(categoryName(fixedCategory(data.name) ?? data.category) ? [node("span", "ex-chip tag", fixedCategory(data.name) ? categoryName(fixedCategory(data.name))
+      : data.guessed ? `${categoryName(data.category)} · ${t().guessed}` : categoryName(data.category))] : []));
   $("#track").textContent = saved ? t().tracked : t().track;
   $("#track").classList.toggle("on", Boolean(saved));
   $("#track").title = t().trackHint;

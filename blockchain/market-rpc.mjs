@@ -155,7 +155,7 @@ export function createNodes({ rpc = postRpc, get, cached }) {
         };
       }
       // Every coin's contract on every network, and the top coins by symbol, for links to coin pages.
-      ids = { contract: new Map(), symbol: new Map(), image: new Map() };
+      ids = { contract: new Map(), symbol: new Map(), image: new Map(), cap: new Map() };
       for (const coin of Array.isArray(list) ? list : []) {
         for (const address of Object.values(coin.platforms ?? {})) {
           if (/^0x[0-9a-fA-F]{40}$/.test(address ?? "") && !ids.contract.has(address.toLowerCase())) ids.contract.set(address.toLowerCase(), coin.id);
@@ -166,6 +166,9 @@ export function createNodes({ rpc = postRpc, get, cached }) {
         if (symbol && !ids.symbol.has(symbol)) ids.symbol.set(symbol, coin.id);
         // Each of the largest coins' logo, for tokens whose source brings none.
         if (/^https:\/\/(?:coin-images|assets)\.coingecko\.com\//.test(coin.image ?? "")) ids.image.set(coin.id, coin.image);
+        // What all of a coin is worth, so no wallet's holding of it can count for more (market-chain.mjs, `sane`).
+        const whole = Math.max(coin.market_cap ?? 0, coin.fully_diluted_valuation ?? 0);
+        if (whole > 0) ids.cap.set(coin.id, whole);
       }
       return result;
       // Kept while a refresh runs: the lists change slowly, and a slow refresh must not hold up a page.

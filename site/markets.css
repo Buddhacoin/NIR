@@ -1533,7 +1533,7 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   .ex-head .ex-actions { grid-row: 1; grid-column: 3; flex-wrap: nowrap; gap: 0; }
   .ex-head .ex-address, .ex-head .ex-total, .ex-head .ex-tags { grid-column: 1 / -1; }
   .ex-head .ex-address code { font-size: 12px; }
-  .ex-head .ex-tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+  .ex-head .ex-tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
   .ex-head .ex-tags::-webkit-scrollbar { display: none; }
   .ex-head .ex-tags > * { flex: none; }
   .ex-head .ex-actions .act { display: grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; background: none; color: var(--text); font-size: 0; }

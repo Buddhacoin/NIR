@@ -110,5 +110,5 @@ if (logos && !fixture) {
 chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
 // Every hour, names from the wallets' behaviour in the store of transfers (deposit addresses, hot wallets).
-if (!fixture) createBehaviour({ ledger, names: chain.names }).start();
+if (!fixture) createBehaviour({ ledger, names: chain.names, hasCode: chain.hasCode }).start();
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => service.server.close(() => process.exit(0)));

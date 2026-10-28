@@ -268,10 +268,12 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     const wanted = String(entity ?? "").trim();
     if (wanted.length < 2 || wanted.length > 60) return [];
     const like = `${wanted.replace(/[%_\\]/g, (char) => `\\${char}`)}%`;
+    // Exploiters', scammers' and deposit addresses are no part of it; left out before the limit, so every
+    // page that counts an organisation's wallets counts the same ones.
     return sql(`SELECT address, name, entity, logo FROM wallet_names WHERE name IS NOT NULL AND (entity = ? COLLATE NOCASE
-      OR name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\' AND (substr(name, ?, 1) IN (':', ' ', '(')) ) LIMIT ?`)
-      .all(wanted, wanted, `${wanted}%`.replace(/%$/, "%"), wanted.length + 1, limit)
-      .filter((row) => !/exploit|scam|phish|deposit/i.test(row.name))
+      OR name = ? COLLATE NOCASE OR name LIKE ? ESCAPE '\\' AND (substr(name, ?, 1) IN (':', ' ', '(')) )
+      AND name NOT LIKE '%exploit%' AND name NOT LIKE '%scam%' AND name NOT LIKE '%phish%' AND name NOT LIKE '%deposit%' LIMIT ?`)
+      .all(wanted, wanted, like, wanted.length + 1, limit)
       .map((row) => ({ address: row.address, name: row.name, logo: row.logo ?? null }));
   }
   // An organisation's category: the one most of its known wallets have.

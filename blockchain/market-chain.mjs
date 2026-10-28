@@ -107,7 +107,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   // one request at a time, so a flood of new wallets must not queue up behind each other).
   let nodeUsed = [];
   const failedUntil = new Map(); // key → time before which a lookup that failed without a copy is not tried again
-  async function cached(key, ttl, load, { stale = false, nodes: onNodes = false } = {}) {
+  // `background`: work no visitor waits for (the lists' sums, organisations' wallets) takes at most 60 % of
+  // the budget, so a visitor's page always has room.
+  async function cached(key, ttl, load, { stale = false, nodes: onNodes = false, background = false } = {}) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
     if (!hit && (failedUntil.get(key) ?? 0) > now()) throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
@@ -119,7 +121,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     used = used.filter((at) => now() - at < 60_000);
     nodeUsed = nodeUsed.filter((at) => now() - at < 60_000);
     const spent = onNodes ? nodeUsed : used;
-    if (spent.length >= (onNodes ? 30 : perMinute)) {
+    if (spent.length >= (onNodes ? 30 : background ? Math.floor(perMinute * 0.6) : perMinute)) {
       if (hit) return hit.value;
       throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
     }
@@ -258,12 +260,26 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   }
   // A wallet seen before opens at once from its copy while a fresh one is read behind it.
   // A copy where a network did not answer is kept half a minute only, so the next visit asks again.
-  async function holdings(address) {
+  async function holdings(address, { background = false } = {}) {
     const key = `holdings:${address.toLowerCase()}`;
-    const value = await cached(key, 600_000, () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true });
+    const value = await cached(key, 600_000, () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true, background });
     const hit = cache.get(key);
     if (hit && value?.networks?.some((item) => !item.ok)) hit.at = Math.min(hit.at, now() - 600_000 + 30_000);
-    return reprice(value);
+    return sane(reprice(value), await nodes.coinIds().catch(() => null));
+  }
+  // A token whose dollar value cannot be real is left out: more than all of the coin is worth, a
+  // contract no coin list knows under a large coin's ticker (a look-alike), or over a billion dollars of an
+  // unknown contract. The explorers price such look-alikes at the real coin's price.
+  function sane(value, ids) {
+    if (!value?.assets || !ids?.contract) return value;
+    const wrong = (asset) => {
+      if (!asset.token?.address || !(asset.usd > 0)) return false;
+      const coinId = ids.contract.get(asset.token.address.toLowerCase());
+      if (coinId) return ids.cap?.has(coinId) && asset.usd > ids.cap.get(coinId);
+      return asset.usd > 1e9 || (asset.usd > 1e6 && ids.symbol?.has(String(asset.token.symbol ?? "").toUpperCase()));
+    };
+    if (!value.assets.some(wrong)) return value;
+    return { ...value, assets: value.assets.filter((asset) => !wrong(asset)) };
   }
   // The UTXO network's coin is valued at today's price when answered, not when its copy was read:
   // a copy made before the prices were in would show a balance of nothing for ten minutes.
@@ -438,7 +454,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const address = job.members[next++];
         if (job.holdings.has(address)) continue;
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          try { job.holdings.set(address, await holdings(address)); break; } catch { await pause(10_000); }
+          try { job.holdings.set(address, await holdings(address, { background: true })); break; } catch { await pause(10_000); }
         }
         if (!job.holdings.has(address)) job.holdings.set(address, null);
         await pause(1_000);
@@ -446,6 +462,15 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     };
     await Promise.all([worker(), worker()]).catch(() => {});
     job.running = false;
+    // Wallets that did not answer are tried again a little later (twice at most), not counted as read.
+    const failed = [...job.holdings].filter(([, value]) => value === null).map(([address]) => address);
+    job.failed = failed.length;
+    if (failed.length && (job.retries ?? 0) < 2) {
+      job.retries = (job.retries ?? 0) + 1;
+      await pause(60_000);
+      for (const address of failed) job.holdings.delete(address);
+      if (!job.running) void fillEntity(job);
+    }
   }
   // The organisation's recent transfers from the store: its own side carries its name, not an address.
   function entityTransfers(name, members, limit = 60) {
@@ -511,7 +536,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
     const list = [...assets.values()].sort((left, right) => right.usd - left.usd);
     const logo = names.members(name, 300).find((item) => item.logo)?.logo ?? null;
-    return { name, category, logo, count: job.members.length, loaded: job.holdings.size, done: !job.running && job.holdings.size >= job.members.length,
+    const read = [...job.holdings.values()].filter(Boolean).length;
+    return { name, category, logo, count: job.members.length, loaded: read, failed: job.failed ?? 0,
+      done: !job.running && job.holdings.size >= job.members.length && (!job.failed || (job.retries ?? 0) >= 2),
       sample: masked(job.members[0]), total: list.reduce((sum, asset) => sum + asset.usd, 0), assets: list.slice(0, 100),
       transfers: entityTransfers(name, job.members) };
   }
@@ -621,7 +648,12 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     if (!ledger) return Promise.resolve([]);
     if (!whalesCounting && now() - whalesAt > 600_000) {
       whalesCounting = (ledger.busiestLater ?? (async (since, limit) => ledger.busiest(since, limit)))(now() - 30 * 86_400_000, 300)
-        .then((rows) => { whaleRows = rows; whalesAt = now(); }, () => {})
+        .then((rows) => {
+          whaleRows = rows;
+          whalesAt = now();
+          // Wallets without a name of their own are checked for code, one at a time: a contract leaves the list.
+          void (async () => { for (const row of rows) { const known = names.name(row.address); if (!known?.name || known.guessed) await hasCode(row.address); } })().catch(() => {});
+        }, () => {})
         .finally(() => { whalesCounting = null; });
     }
     return whaleRows ? Promise.resolve(whaleRows) : (whalesCounting ?? Promise.resolve()).then(() => whaleRows ?? []);
@@ -688,7 +720,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       // own store of transfers), with their names when known; ?group=found: names found from behaviour, newest first.
       if (path === "/market/chain/popular" && ["whales", "found"].includes(url.searchParams.get("group"))) {
         const ids = await nodes.coinIds().catch(() => null);
-        const notWallet = (address, name) => ids?.contract?.has(String(address).toLowerCase()) || /^0x0{40}$/i.test(address)
+        const notWallet = (address, name) => ids?.contract?.has(String(address).toLowerCase()) || /^0x0{40}$/i.test(address) || knownContract(address)
           || /router|pool|bridge|swap|vault|aggregator|wrapped|token/i.test(name ?? "");
         const items = url.searchParams.get("group") === "found"
           ? names.found(200).map((row) => ({ address: row.address, name: row.name, entity: row.entity, category: row.category, found: row.at, guessed: true }))
@@ -728,7 +760,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       }
       if (path === "/market/chain/entities") {
         const wanted = (url.searchParams.get("names") ?? "").split(",").map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 60).slice(0, 60);
-        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 80).length])) }, 600), true;
+        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 300).length])) }, 600), true;
       }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
       if (path === "/market/chain/names") {
@@ -747,7 +779,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (path === "/market/chain/totals") {
         // Known wallets are asked by their ids and answered under them.
         const asked = [...new Set((url.searchParams.get("addresses") ?? "").split(","))].map((value) => [value, resolveAsked(value)])
-          .filter(([, address]) => addressKind(address)).slice(0, 200);
+          .filter(([, address]) => addressKind(address)).slice(0, 200)
+          // One wallet is one sum, whatever the letters' case of its address.
+          .map(([value, address]) => [value, addressKind(address) === "evm" ? address.toLowerCase() : address]);
         for (const [, address] of asked) followTotal(address);
         return reply(response, 200, { totals: Object.fromEntries(asked.map(([value, address]) => [value, totals.get(address) ?? null])) }, 30), true;
       }
@@ -766,7 +800,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       const answer = (status, body, maxAge) => reply(response, status, body, maxAge, hide);
       if (!part) {
         const [data] = await Promise.all([holdings(address).then(withCoinIds), learn([{ from: { address } }], 2_000)]);
-        noteTotal(address, data);
+        noteTotal(addressKind(address) === "evm" ? address.toLowerCase() : address, data);
         const own = labelFor(address);
         let open = names.name(address);
         // A wallet no label names may have an OpenSea profile: its username, picture and linked X account.
@@ -816,8 +850,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   try { if (totalsFile) for (const [address, value] of Object.entries(JSON.parse(readFileSync(totalsFile, "utf8")))) totals.set(address, value); } catch {}
   function noteTotal(address, data) {
     if (!data?.assets) return;
-    // A partial answer (tokens not counted yet) does not replace a whole one.
-    const partial = (data.networks ?? []).some((item) => item.partial);
+    // A partial answer (tokens not counted yet, or a network that did not answer) does not replace a whole one.
+    const partial = (data.networks ?? []).some((item) => item.partial || !item.ok);
     if (partial && totals.has(address)) return;
     totals.set(address, { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0), chains: [...new Set(data.assets.map((asset) => asset.chain))], at: now(), partial });
   }
@@ -834,7 +868,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         .filter((address) => now() - (totals.get(address)?.at ?? 0) > 15 * 60_000 || totals.get(address)?.partial)
         .sort((left, right) => (totals.get(left)?.at ?? 0) - (totals.get(right)?.at ?? 0));
       for (let index = 0; index < due.length; index += 2) {
-        await Promise.all(due.slice(index, index + 2).map((address) => holdings(address).then((data) => noteTotal(address, data)).catch(() => null)));
+        await Promise.all(due.slice(index, index + 2).map((address) => holdings(address, { background: true }).then((data) => noteTotal(address, data)).catch(() => null)));
       }
       if (totalsFile) { try { writeFileSync(totalsFile, JSON.stringify(Object.fromEntries(totals))); } catch {} }
     })().finally(() => { refreshing = null; });
@@ -843,5 +877,23 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   const totalsTimer = setInterval(() => { void refreshTotals(); }, 5 * 60_000);
   totalsTimer.unref?.();
 
-  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  // Whether an address is a contract on any of the networks with a public node (code there): a contract
+  // is no one's wallet, so guesses from behaviour leave it out. Kept for the service's life.
+  const codeOf = new Map(); // lower-case address → true | false
+  async function hasCode(address) {
+    const key = String(address ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(key)) return false;
+    if (codeOf.has(key)) return codeOf.get(key);
+    const answers = await Promise.all([...Object.values(NODES), BACKUP.eth].filter((node) => node?.rpc)
+      .map((node) => rpc(node.rpc, "eth_getCode", [key, "latest"]).then((code) => (typeof code === "string" ? code.length > 2 : null), () => null)));
+    // Not one node answered: unknown, asked again next time.
+    if (answers.every((answer) => answer === null)) return false;
+    const found = answers.some(Boolean);
+    if (codeOf.size > 50_000) codeOf.delete(codeOf.keys().next().value);
+    codeOf.set(key, found);
+    return found;
+  }
+  const knownContract = (address) => codeOf.get(String(address ?? "").toLowerCase()) === true;
+
+  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, hasCode, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

@@ -276,7 +276,6 @@ const WHALES = [
   { address: "w:stani-kulechov", short: "0x2E21f5d32841cf8C7da…", name: "Stani Kulechov", ens: "stani.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "w:hayden-adams", short: "0x50EC05ADe8280758E20…", name: "Hayden Adams", ens: "hayden.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "w:kain-warwick", short: "0x42f9134E9d3Bf7eEE1f…", name: "Kain Warwick", ens: "kain.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "w:dan-romero", short: "0xD64aA5F70F228dC486b…", name: "Dan Romero", ens: "dwr.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "w:balaji-srinivasan", short: "0x0916C04994849c676ab…", name: "Balaji Srinivasan", ens: "balajis.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "w:jesse-pollak", short: "0x849151d7D0bF1F34b70…", name: "Jesse Pollak", ens: "jessepollak.eth", kind: { ru: "Персона", en: "Individual" } },
   { address: "w:brantly-millegan", short: "0x983110309620D911731…", name: "Brantly Millegan", ens: "brantly.eth", kind: { ru: "Персона", en: "Individual" } },
@@ -284,8 +283,17 @@ const WHALES = [
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
 // An organisation's name from a wallet's label: "Binance 14" or "Binance: Hot Wallet" → "Binance".
-const entityName = (name) => String(name ?? "").split(/[:(]/)[0].replace(/\s+\d+$/, "").trim();
+// One organisation under two labels goes to one page ("Coinbase Exchange: Hot Wallet" → "Coinbase").
+const ENTITY_ALIASES = { "coinbase exchange": "Coinbase", "coinbase 10": "Coinbase", "okex": "OKX", "kraken exchange": "Kraken" };
+const entityName = (name) => { const plain = String(name ?? "").split(/[:(]/)[0].replace(/\s+\d+$/, "").trim(); return ENTITY_ALIASES[plain.toLowerCase()] ?? plain; };
+// The hand-picked organisations' kind, fixed: the labels' vote can tip the wrong way (a market maker's
+// wallet labelled as an exchange's).
+const ENTITY_CATEGORIES = { Binance: "exchange", Coinbase: "exchange", Kraken: "exchange", OKX: "exchange", "Jump Trading": "market-maker",
+  Wintermute: "market-maker", "Ethereum Foundation": "fund", "U.S. Government": "government" };
+const fixedCategory = (name) => (name ? ENTITY_CATEGORIES[entityName(name)] ?? null : null);
 const entityUrl = (name) => `/entity/?name=${encodeURIComponent(name)}`;
+// Labels that say what a wallet is, not whose: no organisation page for them.
+const GENERIC_LABEL = /^(?:fund|funds|whale|whales|exchange|hot wallet|cold wallet|deployer|contract|bridge|multisig|unknown|token|wallet|miner|mev bot|bot|dex|cex|otc|market maker|sybil delegate|delegate|proxy|safe|gnosis safe)$/i;
 // Open labels fetched by the page: lower-case address → { name, logo, site, entity }.
 const openNames = new Map();
 async function loadOpenNames(addresses) {

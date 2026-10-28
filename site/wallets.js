@@ -31,7 +31,6 @@ const t = () => words[language === "en" ? "en" : "ru"];
 // How many known wallets each organisation has (/market/chain/entities), asked for the rows shown.
 const entityCounts = new Map();
 let satoshi = null; // /market/chain/satoshi, for Satoshi Nakamoto's row
-const GENERIC_LABEL = /^(?:fund|funds|whale|whales|exchange|hot wallet|cold wallet|deployer|contract|bridge|multisig|unknown|token|wallet|miner|mev bot|bot|dex|cex|otc|market maker)$/i;
 const askCounts = new Set();
 async function loadCounts() {
   const wanted = [...askCounts].filter((name) => name.length >= 2 && !entityCounts.has(name)).slice(0, 60);
@@ -197,12 +196,15 @@ function pump() {
     // A wallet that takes over half a minute shows "—" instead of loading for ever.
     void fetch(`/market/chain/address/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(30_000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null)
       .then((data) => {
-        balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
-          chains: [...new Set(data.assets.map((asset) => asset.chain))] } : null);
-        // A big wallet's first answer can lack the tokens the explorer has not counted yet (the wallet's
-        // page waits for them): asked again until whole, so the list shows the same sum as the page.
+        // A big wallet's first answer can lack the tokens the explorer has not counted yet, or a network that
+        // did not answer: it does not replace a whole sum already shown, and is asked again until whole, so the
+        // list shows the same sum as the page. A failed answer is asked again too.
+        const incomplete = !data || data.networks?.some((item) => item.partial || !item.ok);
+        const had = balances.get(address);
+        if (!incomplete || !had) balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
+          chains: [...new Set(data.assets.map((asset) => asset.chain))] } : had ?? null);
         const tries = retried.get(address) ?? 0;
-        if (data?.networks?.some((item) => item.partial) && tries < 4) {
+        if (incomplete && tries < 4) {
           retried.set(address, tries + 1);
           setTimeout(() => { queue.push(address); pump(); }, 15_000);
         }
