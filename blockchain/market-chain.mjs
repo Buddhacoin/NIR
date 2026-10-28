@@ -16,6 +16,7 @@
 // minute keeps a burst of visitors from hammering the explorers; past it, a
 // cached copy is served or the visitor is asked to retry.
 
+import { readFileSync, writeFileSync } from "node:fs";
 import { createNames } from "./market-names.mjs";
 import { BACKUP, createNodes, NODES, postRpc } from "./market-rpc.mjs";
 
@@ -685,11 +686,19 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }));
         return reply(response, 200, { results }, 300), true;
       }
+      // GET /market/chain/totals?addresses=a,b,…: each wallet's last whole balance the server knows (at once,
+      // no fetching); the ones asked are kept fresh in the background, so lists show their sums straight away.
+      if (path === "/market/chain/totals") {
+        const asked = [...new Set((url.searchParams.get("addresses") ?? "").split(",").filter((address) => addressKind(address)))].slice(0, 200);
+        for (const address of asked) followTotal(address);
+        return reply(response, 200, { totals: Object.fromEntries(asked.map((address) => [address, totals.get(address) ?? null])) }, 30), true;
+      }
       const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history|links))?$/.exec(path);
       if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
       const [, address, part] = match;
       if (!part) {
         const [data] = await Promise.all([holdings(address).then(withCoinIds), learn([{ from: { address } }], 2_000)]);
+        noteTotal(address, data);
         const own = labelFor(address);
         let open = names.name(address);
         // A wallet no label names may have an OpenSea profile: its username, picture and linked X account.
@@ -729,6 +738,41 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       return reply(response, error?.status === 503 ? 503 : 502, { error: "the explorer is unavailable, try again in a minute" }), true;
     }
   }
+
+  // Wallet totals for the lists (popular wallets, whales): the last whole answer of each, kept on disk, and the
+  // wallets lists asked for refreshed every quarter of an hour, two at a time.
+  const totals = new Map(); // address → { total, chains, at }
+  const followed = new Map(); // address → last asked
+  const totalsFile = namesFile && namesFile !== ":memory:" ? namesFile.replace(/[^/\\]+$/, "totals.json") : null;
+  try { if (totalsFile) for (const [address, value] of Object.entries(JSON.parse(readFileSync(totalsFile, "utf8")))) totals.set(address, value); } catch {}
+  function noteTotal(address, data) {
+    if (!data?.assets) return;
+    // A partial answer (tokens not counted yet) does not replace a whole one.
+    const partial = (data.networks ?? []).some((item) => item.partial);
+    if (partial && totals.has(address)) return;
+    totals.set(address, { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0), chains: [...new Set(data.assets.map((asset) => asset.chain))], at: now(), partial });
+  }
+  function followTotal(address) {
+    if (!followed.has(address) && followed.size >= 1_000) followed.delete(followed.keys().next().value);
+    followed.set(address, now());
+    if (!totals.has(address)) void refreshTotals();
+  }
+  let refreshing = null;
+  function refreshTotals() {
+    refreshing ??= (async () => {
+      // The ones never counted first, then the stalest; a wallet nobody asked about for a day is let go.
+      const due = [...followed].filter(([, asked]) => now() - asked < 86_400_000).map(([address]) => address)
+        .filter((address) => now() - (totals.get(address)?.at ?? 0) > 15 * 60_000 || totals.get(address)?.partial)
+        .sort((left, right) => (totals.get(left)?.at ?? 0) - (totals.get(right)?.at ?? 0));
+      for (let index = 0; index < due.length; index += 2) {
+        await Promise.all(due.slice(index, index + 2).map((address) => holdings(address).then((data) => noteTotal(address, data)).catch(() => null)));
+      }
+      if (totalsFile) { try { writeFileSync(totalsFile, JSON.stringify(Object.fromEntries(totals))); } catch {} }
+    })().finally(() => { refreshing = null; });
+    return refreshing;
+  }
+  const totalsTimer = setInterval(() => { void refreshTotals(); }, 5 * 60_000);
+  totalsTimer.unref?.();
 
   return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

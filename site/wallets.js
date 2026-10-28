@@ -167,7 +167,24 @@ const seen = new IntersectionObserver((entries) => {
 }, { rootMargin: "200px" });
 function watchRows() {
   seen.disconnect();
-  for (const row of document.querySelectorAll("#rows tr[data-address]")) if (!balances.has(row.dataset.address)) seen.observe(row);
+  const rows = [...document.querySelectorAll("#rows tr[data-address]")];
+  void loadTotals(rows.map((row) => row.dataset.address));
+  // A wallet the server has no sum for yet is read on its own when its row comes into view.
+  for (const row of rows) if (!balances.has(row.dataset.address) && totalsAsked.get(row.dataset.address) === false) seen.observe(row);
+}
+// The sums the server keeps for the lists (/market/chain/totals): shown at once, and kept fresh there.
+const totalsAsked = new Map(); // address → true while asking, false once the server had none
+async function loadTotals(addresses) {
+  const wanted = addresses.filter((address) => !balances.has(address) && !totalsAsked.has(address)).slice(0, 200);
+  if (!wanted.length) return;
+  for (const address of wanted) totalsAsked.set(address, true);
+  const answer = await fetch(`/market/chain/totals?addresses=${wanted.map(encodeURIComponent).join(",")}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
+  for (const address of wanted) {
+    const known = answer?.totals?.[address];
+    if (known) balances.set(address, { total: known.total, chains: known.chains });
+    totalsAsked.set(address, false);
+  }
+  render();
 }
 function pump() {
   while (working < 4 && queue.length) {

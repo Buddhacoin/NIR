@@ -437,6 +437,8 @@ addEventListener("hashchange", openHash);
 
 sortable($("thead"), sort, () => renderTable());
 setupSearch({ overview: () => data });
+// The first frame from the last market answer (common.js keptJson); the fresh one follows in place.
+data = keptJson("/market/overview");
 setupPage({ en, render: () => { if (data) { renderCards(); renderTable(); } renderTransfers(); } });
 void load();
 setInterval(load, 60_000);

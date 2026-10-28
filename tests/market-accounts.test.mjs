@@ -51,7 +51,9 @@ test("Google sign-in creates an account, a session cookie and a public profile",
     const me = await (await app.call("/market/me", { cookie })).json();
     assert.match(me.user.username, /^user\d{6}$/);
     assert.deepEqual(me.watchlist, []);
-    assert.equal(JSON.stringify(me).includes("olympus"), false, "the email never leaves the server");
+    // The owner sees the address they signed in with (several Google accounts can each have a page); nobody else does.
+    assert.equal(me.email, "zeus@olympus.example");
+    assert.equal(JSON.stringify(me.user).includes("olympus"), false, "the public profile never carries the email");
     assert.deepEqual(await (await app.call("/market/stats")).json(), { users: 1 });
 
     // The same Google account signs in to the same profile.
@@ -95,6 +97,7 @@ test("the watchlist and profile change only for the signed-in owner, from this s
     assert.equal(own.own, true);
     assert.deepEqual(own.activity.map((item) => item.kind), ["profile", "watch", "watch", "joined"]);
     const visitor = await (await app.call("/market/u/zeus_olympus")).json();
+    assert.equal(JSON.stringify(visitor).includes("@olympus.example"), false, "a visitor never sees the owner's email");
     assert.deepEqual(visitor.activity.map((item) => item.kind), ["joined"], "the watchlist stays private");
   } finally { await app.stop(); }
 });

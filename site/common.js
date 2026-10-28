@@ -21,7 +21,9 @@ let accountChanged = () => {};
 // page straight away, while a fresh copy is fetched behind them for the next look. Anything the visitor
 // changes (a POST, PUT, PATCH or DELETE of their own) drops their kept copies, so they never see an old one.
 const FAST = [[/^\/market\/overview$/, 120_000], [/^\/market\/stats$/, 300_000], [/^\/market\/sentiment$/, 300_000],
-  [/^\/market\/me\/(portfolio|addresses)$/, 90_000], [/^\/market\/u\/[^/]+$/, 90_000]];
+  [/^\/market\/me\/(portfolio|addresses)$/, 90_000], [/^\/market\/u\/[^/]+$/, 90_000], [/^\/market\/chart\/[^/]+$/, 300_000],
+  // A wallet's holdings: a profile's own wallets and the wallet lists open with the last answer, refreshed behind.
+  [/^\/market\/chain\/address\/[^/]+$/, 300_000]];
 (() => {
   const native = window.fetch.bind(window);
   const keyOf = (url) => `nir-fast:${url.pathname}${url.search}`;
@@ -42,7 +44,8 @@ const FAST = [[/^\/market\/overview$/, 120_000], [/^\/market\/stats$/, 300_000],
     if (!rule) return native(input, init);
     const live = native(input, init).then(async (response) => {
       if (response.ok) {
-        try { const text = await response.clone().text(); if (text.length < 600_000) localStorage.setItem(keyOf(url), JSON.stringify({ at: Date.now(), text })); } catch {}
+        // A partial answer (a big wallet's tokens still being counted) is not kept: the next ask gets the whole one.
+        try { const text = await response.clone().text(); if (text.length < 600_000 && !text.includes('"partial":true')) localStorage.setItem(keyOf(url), JSON.stringify({ at: Date.now(), text })); } catch {}
       }
       return response;
     });
@@ -55,6 +58,14 @@ const FAST = [[/^\/market\/overview$/, 120_000], [/^\/market\/stats$/, 300_000],
     return live;
   };
 })();
+// The last answer of a kept address (FAST above), read at once: a page draws its first frame from it, before
+// anything is fetched, so it never shows empty and then fills (the blink on moving between pages).
+function keptJson(path, maxAge = 10 * 60_000) {
+  try {
+    const kept = JSON.parse(localStorage.getItem(`nir-fast:${path}`) ?? "null");
+    return kept && Date.now() - kept.at < maxAge ? JSON.parse(kept.text) : null;
+  } catch { return null; }
+}
 const saveWatch = () => store.set("nir-markets-watch", [...watch].join(","));
 // The watchlist belongs to an account: signed out, a star leads to signing in.
 function toggleWatch(id) {
@@ -463,8 +474,9 @@ function logo(coin) {
     const kept = /^https:\/\/(?:coin-images|assets)\.coingecko\.com\/coins\/images\/(\d+)\/(thumb|small|large|standard)\/([A-Za-z0-9._-]+)/.exec(coin.image);
     image.src = kept ? `/market/logo/coin/${kept[1]}/large/${kept[3]}` : coin.image; // sharp on phones' dense screens
     image.alt = "";
-    // Not lazy: a lazy picture starts empty and fills in while the list is in view, which reads as blinking.
-    image.decoding = "async";
+    // Not lazy and decoded with the page: a lazy or separately decoded picture paints a frame or two after the
+    // row, which reads as blinking on every page change (the file itself comes from the browser's cache).
+    image.decoding = "sync";
     image.referrerPolicy = "no-referrer";
     // The server without the picture: CoinGecko's own address; that failing too, the coin's first letter.
     let direct = !kept;
@@ -480,7 +492,7 @@ function logo(coin) {
     const image = document.createElement("img");
     image.className = "logo";
     image.alt = "";
-    image.decoding = "async";
+    image.decoding = "sync";
     image.src = `/market/logo/symbol/${coin.symbol}`;
     image.addEventListener("error", () => image.replaceWith(logo({ ...coin, tickerTried: true })), { once: true });
     return image;

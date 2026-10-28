@@ -293,7 +293,7 @@ export function createAccounts({
     }
     const user = userFor(request);
     if (method === "GET" && path === "/market/me") {
-      json(response, 200, user ? { signIn: enabled, user: profile(user), watchlist: watchlist(user.id), alertsUnseen: alerts.unseen(user.id), moderator: isModerator(user) } : { signIn: enabled, user: null });
+      json(response, 200, user ? { signIn: enabled, user: profile(user), email: user.email, watchlist: watchlist(user.id), alertsUnseen: alerts.unseen(user.id), moderator: isModerator(user) } : { signIn: enabled, user: null });
       return true;
     }
     // Every change below comes from a page on this site, from a signed-in visitor.

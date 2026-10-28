@@ -150,6 +150,7 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
   // A picture for a ticker the market lists do not know (a new listing, a tokenised share): CoinGecko's
   // search by the exact ticker, the open icon sets, then a share's logo by its ticker ("…STOCK" → the share).
   // Kept once found; a ticker without one is asked again a day later, and the page shows its first letter.
+  let searches = []; // times of the last CoinGecko searches
   async function symbolPicture(symbol) {
     const key = `symbol-${symbol}`;
     const path = join(dir, `${key}.img`);
@@ -158,9 +159,15 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
     if (pending.has(key)) return pending.get(key);
     const job = (async () => {
       const lower = symbol.toLowerCase();
+      // CoinGecko's search allows a handful of asks a minute: past that it is skipped this time, and the
+      // ticker is not written off (it is looked for again soon rather than tomorrow).
+      searches = searches.filter((at) => now() - at < 60_000);
+      const canSearch = searches.length < 8;
+      if (canSearch) searches.push(now());
       const share = symbol.replace(/(?:STOCK|ON)$/, "") || symbol;
       const tries = [
         async () => {
+          if (!canSearch) return null;
           const found = await fetchJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(symbol)}`);
           const coin = (found?.coins ?? []).find((item) => String(item?.symbol ?? "").toUpperCase() === symbol);
           return coin?.large ?? coin?.thumb ?? null;
@@ -179,7 +186,7 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
           return bytes;
         } catch {}
       }
-      missing.set(key, now() + 86_400_000);
+      missing.set(key, now() + (canSearch ? 86_400_000 : 600_000));
       return null;
     })();
     pending.set(key, job);
@@ -192,7 +199,7 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
     if (ticker && dir) {
       const bytes = request.method === "GET" ? await symbolPicture(ticker[1]) : null;
       response.writeHead(bytes ? 200 : 404, bytes ? { "content-type": pictureKind(bytes), "cache-control": "public, max-age=2592000, immutable",
-        "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } : { "content-type": "text/plain", "cache-control": "public, max-age=3600" });
+        "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } : { "content-type": "text/plain", "cache-control": "public, max-age=300" });
       response.end(bytes ?? "no picture");
       return true;
     }

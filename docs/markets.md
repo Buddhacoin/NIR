@@ -57,6 +57,17 @@ CoinGecko for prices and TradingView for charts.
 - A coin or token the lists have no picture for (a new listing, a tokenised share) gets one by its ticker from the server (`/market/logo/symbol/<TICKER>`: CoinGecko's search, the open icon sets, a share's logo), kept once found. A listing's "price now" is its price on the exchange that listed it.
 - The order book's price step sits with the book; big orders stand out on both sides with a stronger bar, a band and an edge in the side's colour.
 
+## No blink between pages
+
+Measured on a phone-sized browser recording, frame by frame (10 a second), moving through the bottom menu:
+- the home page, the portfolio and a profile drew one empty frame (cards "—", "Loading…", a $0 portfolio with "Building the chart") before the kept answers arrived: they now draw their first frame from the last answer at once (`keptJson` in `site/common.js`, which reads the kept copies synchronously), and a profile shows no sum until a wallet's balance is in;
+- the phone header showed the search box and "Markets" until the scripts ran: the stylesheet hides them on phones from the start;
+- coin pictures painted a frame or two after their rows: they are decoded with the page (`decoding="sync"`, not lazy);
+- cross-page view transitions were dropped (the browser aborted them on most moves).
+A wallet's holdings and coin charts join the kept answers (a partial wallet answer is never kept). The wallet lists show the server's last whole sum of each wallet at once (`GET /market/chain/totals`, kept in `totals.json` and refreshed every quarter of an hour for the wallets lists ask about).
+
+In the day theme what is chosen or pressed is black with white letters, and the blue buttons are black. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the
