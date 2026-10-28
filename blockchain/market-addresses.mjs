@@ -45,6 +45,9 @@ export function createAddresses({ db, now }) {
     if (path === "/market/me/wallet-portfolios" && method === "POST") {
       const name = cleanName((await body(request))?.name);
       if (!name || [...name].length > 40) return json(response, 400, { error: "a name of 1 to 40 characters" }), true;
+      // A second portfolio of the same name (a double tap) is the first one.
+      const same = portfolios(user.id).find((item) => item.name.toLowerCase() === name.toLowerCase());
+      if (same) return json(response, 200, { ...answer(user.id), id: same.id }), true;
       if (portfolios(user.id).length >= PORTFOLIOS) return json(response, 409, { error: "too many portfolios" }), true;
       const id = Number(sql("INSERT INTO wallet_portfolios (user_id, name, created_at) VALUES (?, ?, ?)").run(user.id, name, now()).lastInsertRowid);
       return json(response, 200, { ...answer(user.id), id }), true;

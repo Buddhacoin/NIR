@@ -227,11 +227,8 @@ async function toggle(address) {
     else alert(t().signIn);
     return;
   }
-  const tracked = saved.has(address.toLowerCase());
-  const { status, data } = tracked ? await send(`/market/me/addresses/${encodeURIComponent(address)}`, "DELETE")
-    : await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", { mine: false });
-  if (status === 200) saved = new Set(data.addresses.map((item) => item.address.toLowerCase()));
-  render();
+  // Into one of the visitor's portfolios, only tracked, or off (portfolioSheet in common.js).
+  await portfolioSheet(address, (data) => { saved = new Set(data.addresses.map((item) => item.address.toLowerCase())); render(); });
 }
 
 sortable($("thead"), sort, render);

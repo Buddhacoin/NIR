@@ -18,13 +18,12 @@ const en = {
   howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "☆ Следить за кошельком", tracked: "★ Слежу",
-    trackHint: "Кошелёк появится в профиле во вкладке «Отслеживаемые»: видно его баланс и новые переводы.",
+  ru: { title: (name) => `${name} — кошелёк на NIR Markets`, wallet: "Кошелёк", contract: "Контракт", track: "＋ В портфель", tracked: "✓ В портфеле", trackOnly: "★ Слежу",
+    trackHint: "Добавить кошелёк в один из ваших портфелей или просто следить: в профиле видно его баланс и новые переводы.",
     mineHint: "Для своих кошельков: их монеты прибавятся к вашему портфелю в профиле.",
     addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
     entityHint: (name) => `Все адреса: ${name}`, guessed: "по поведению",
     mineDone: "Готово: монеты этого кошелька теперь считаются в вашем портфеле (профиль → «Мои адреса»).",
-    trackDone: "Готово: кошелёк добавлен в ваш профиль, вкладка «Отслеживаемые» — там его баланс и новые переводы.", openTracked: "Открыть →",
     mine: "＋ Это мой кошелёк", isMine: "✓ Мой кошелёк", copied: "Скопировано", missing: "Это не адрес кошелька.",
     unavailable: "Обозреватель сейчас не отвечает. Попробуйте через минуту.", empty: "Активов не найдено.",
     listed: (names) => `В сети ${names} у адреса слишком много токенов для обозревателя: показаны токены 1000 крупнейших монет, прочитанные напрямую из сети; мелкие и редкие токены могут не войти.`,
@@ -47,13 +46,12 @@ const words = {
     askName: "Как называется этот кошелёк? (2–40 символов, например «Биржа Olympus — горячий кошелёк»)",
     askLink: "Ссылка, где это опубликовано (необязательно, https://…)", sent: "Спасибо! Подпись появится после проверки модератором.",
     signInSuggest: "Войдите через Google, чтобы предлагать подписи." },
-  en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "☆ Watch wallet", tracked: "★ Watching",
-    trackHint: "The wallet shows in your profile under Tracked, with its balance and new transfers.",
+  en: { title: (name) => `${name} — wallet on NIR Markets`, wallet: "Wallet", contract: "Contract", track: "+ Add to portfolio", tracked: "✓ In portfolio", trackOnly: "★ Watching",
+    trackHint: "Put the wallet in one of your portfolios or just track it: your profile shows its balance and new transfers.",
     mineHint: "For your own wallets: their coins add up in your profile's portfolio.",
     addresses: (count) => `${count >= 1000 ? `${(count / 1000).toLocaleString("en-US", { maximumFractionDigits: 1 })}k` : count} addresses`,
     entityHint: (name) => `All addresses: ${name}`, guessed: "by behaviour",
     mineDone: "Done: this wallet's coins now count in your portfolio (profile → My addresses).",
-    trackDone: "Done: the wallet is in your profile under Tracked, with its balance and new transfers.", openTracked: "Open →",
     mine: "＋ This is my wallet", isMine: "✓ My wallet", copied: "Copied", missing: "This is not a wallet address.",
     unavailable: "The explorer is not answering. Try again in a minute.", empty: "No assets found.",
     listed: (names) => `On ${names} the address holds too many tokens for the explorer: the tokens of the 1,000 largest coins are shown, read from the network itself; small and rare tokens may be missing.`,
@@ -168,7 +166,7 @@ function renderHead() {
     // The owner's kind from NIR Markets' book; a guess from the wallet's behaviour says so.
     ...(categoryName(fixedCategory(data.name) ?? data.category) ? [node("span", "ex-chip tag", fixedCategory(data.name) ? categoryName(fixedCategory(data.name))
       : data.guessed ? `${categoryName(data.category)} · ${t().guessed}` : categoryName(data.category))] : []));
-  $("#track").textContent = saved ? t().tracked : t().track;
+  $("#track").textContent = !saved ? t().track : saved.portfolioId === null ? t().trackOnly : t().tracked;
   $("#track").classList.toggle("on", Boolean(saved));
   $("#track").title = t().trackHint;
   const partial = data.networks.filter((item) => item.partial && !item.listed).map((item) => chainName(item.chain));
@@ -650,27 +648,6 @@ async function loadSaved() {
   saved = answer?.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
   if (data) renderHead();
 }
-async function save(changes) {
-  if (!account.user) {
-    if (account.signIn) location.href = signInUrl();
-    else alert(t().signIn);
-    return;
-  }
-  const { status, data: answer } = changes === null
-    ? await send(`/market/me/addresses/${encodeURIComponent(address)}`, "DELETE")
-    : await send(`/market/me/addresses/${encodeURIComponent(address)}`, "PUT", changes);
-  if (status === 200) saved = answer.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
-  renderHead();
-  // A word on what the button did, since a phone shows no hints on hover.
-  if (status === 200 && changes) {
-    const note = $("#action-note");
-    note.replaceChildren(t().trackDone, " ", Object.assign(node("a", "", t().openTracked), { href: `/u/${encodeURIComponent(account.user?.username ?? "")}#tracked` }));
-    note.hidden = false;
-    clearTimeout(note.timer);
-    note.timer = setTimeout(() => { note.hidden = true; }, 6_000);
-  }
-}
-
 async function load() {
   if (!ADDRESS.test(address)) { failure = t().missing; render(); return; }
   if (utxo) transferChain = "btc";
@@ -699,7 +676,11 @@ $("#share").addEventListener("click", async () => {
     setTimeout(() => { $("#share").textContent = label; }, 1500);
   }
 });
-$("#track").addEventListener("click", () => void save(saved ? null : { mine: false }));
+// Into one of the visitor's portfolios, only tracked, or off (portfolioSheet in common.js).
+$("#track").addEventListener("click", () => void portfolioSheet(address, (answer) => {
+  saved = answer.addresses.find((item) => item.address.toLowerCase() === address.toLowerCase()) ?? null;
+  renderHead();
+}));
 // Suggest a name: it shows once a moderator approves it.
 $("#suggest").addEventListener("click", async () => {
   if (!account.user) { if (account.signIn) location.href = signInUrl(); else alert(t().signInSuggest); return; }
