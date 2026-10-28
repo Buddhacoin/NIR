@@ -120,7 +120,8 @@ function okxTf(tf) { return { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", 
 function okxTrades(answer, size = 1) {
   return (answer?.data ?? []).map((item) => ({ time: num(item.ts), price: num(item.px), amount: num(item.sz) * size, side: item.side === "sell" ? "sell" : "buy" }));
 }
-function okxCandles(answer) { return (answer?.data ?? []).map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[5]]).reverse(); }
+// Volume in coins (volCcy, row[6]); row[5] counts contracts on the futures.
+function okxCandles(answer) { return (answer?.data ?? []).map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[6] ?? row[5]]).reverse(); }
 
 // A round step near `raw`: 1, 2, 2.5 or 5 times a power of ten.
 export function niceStep(raw) {
@@ -276,12 +277,17 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
         } catch {}
       };
       ws.onclose = ws.onerror = () => {
+        // Once only: closing from inside the handler would call it again.
+        ws.onclose = ws.onerror = null;
         clearInterval(ping);
         try { ws.close(); } catch {}
         if (book.ws !== ws) return;
         book.ws = null;
         book.ready = false;
         book.last = null;
+        // Changes were missed while it was down: the book starts again from the next snapshot.
+        book.bids.clear();
+        book.asks.clear();
         if (book.open) setTimeout(connect, 15_000).unref?.();
       };
     };
@@ -317,7 +323,9 @@ export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 2
     if (!okxSizes) {
       const list = await get("https://www.okx.com/api/v5/public/instruments?instType=SWAP").catch(() => null);
       const pattern = new RegExp(`^([A-Z0-9]+)-${STABLE}-SWAP$`);
-      okxSizes = new Map((list?.data ?? []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
+      const read = new Map((list?.data ?? []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
+      if (!read.size) return null; // asked again next time
+      okxSizes = read;
     }
     return okxSizes.get(base) ?? null;
   }

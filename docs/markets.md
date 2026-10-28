@@ -29,6 +29,14 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Prices that match the market
+
+- A coin page's kept copy (CoinGecko busy, or read back from `cache.db`) takes the market list's price, changes, cap and volume when it is over a minute old, and a kept chart ends at the current price; the week stand-in chart ends at it too. "Updated" moves only when the prices were read. CoinGecko is asked for full precision (`precision=full`), so prices over $1 are not rounded to cents; the site shows four decimals under $10.
+- The trending card shows the list's row of each coin. Network coins' live trades say they trade as their wrapped token.
+- The trend screener's day change comes from the busiest market reporting a rolling 24 hours (MEXC counts from its midnight). Arbitrage buys at the ask and sells at the bid (Binance's ticker has neither: its last price). Exchange prices show as the exchange gives them (up to eight digits).
+- The order book shows each exchange's own pair (Coinbase and Kraken quote dollars) and BTC-quoted money in BTC; OKX futures candles count coins, not contracts. A dropped Binance stream starts its book again from the next snapshot (no cancelled far wall stays), and a failed OKX instruments read is asked again.
+- Coin logos come through the site's server (`/market/logo/coin/<id>/<size>/<file>`, market-logos.mjs), kept on disk, fetched ahead for the market list every ten minutes and sent for a month of browser cache; CoinGecko's own carry no caching headers, so phones fetched them on every page.
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the

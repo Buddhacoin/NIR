@@ -87,8 +87,10 @@ export function createLiquidations({ get, now = Date.now, coins = () => [], coin
     if (okxSizes) return okxSizes;
     const list = await get(`https://www.okx.com/api/v5/public/instruments?instType=SWAP`).catch(() => null);
     const pattern = new RegExp(`^([A-Z0-9]+)-${QUOTE}-SWAP$`);
-    okxSizes = new Map((Array.isArray(list?.data) ? list.data : []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
-    return okxSizes;
+    const read = new Map((Array.isArray(list?.data) ? list.data : []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
+    // A failed read is asked again next time, not kept empty until a restart.
+    if (read.size) okxSizes = read;
+    return read;
   }
   // A stream that reconnects after a pause when it drops.
   async function stream(name, url, hello, every = 0) {
@@ -105,7 +107,8 @@ export function createLiquidations({ get, now = Date.now, coins = () => [], coin
           if (event.data === "pong") return;
           try { take(readLiquidations(name, JSON.parse(event.data), okxSizes)); } catch {}
         };
-        ws.onclose = ws.onerror = () => { clearInterval(ping); try { ws.close(); } catch {} resolve(); };
+        // Once only: closing from inside the handler would call it again.
+        ws.onclose = ws.onerror = () => { ws.onclose = ws.onerror = null; clearInterval(ping); try { ws.close(); } catch {} resolve(); };
       });
       if (running) await wait(15_000);
     }

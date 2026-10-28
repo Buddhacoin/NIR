@@ -36,7 +36,8 @@ const sort = { key: "usd", dir: -1 };
 let data = null;
 
 function priceText(value) {
-  return `$${value.toLocaleString(locale(), value >= 1 ? { maximumFractionDigits: value >= 1000 ? 1 : 4 } : { maximumSignificantDigits: 5 })}`;
+  // The exchange's own price as it gives it (up to eight digits), not rounded off its tick.
+  return `$${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })}`;
 }
 function age(since) {
   const minutes = Math.max(0, Math.round((Date.now() - since) / 60_000));

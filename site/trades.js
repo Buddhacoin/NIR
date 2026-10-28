@@ -119,7 +119,10 @@ function renderTrades() {
   }
   const [network] = tradeTarget;
   $("#trades-pool").textContent = words.pool(pool.name, pool.dex.replace(/[_-]/g, " "), network.replace(/_pos$/, "").toUpperCase());
-  $("#trades-note").textContent = words.note(pool.name, pool.dex.replace(/[_-]/g, " "), trades.length);
+  $("#trades-note").textContent = words.note(pool.name, pool.dex.replace(/[_-]/g, " "), trades.length) +
+    // A network coin trades here as its wrapped token: said plainly, its price in the pool can differ a little.
+    (TRADE_NATIVE[coin.id] ? (language === "en" ? ` The coin trades here as its wrapped token (${pool.name.split(" / ")[0]}); the pool's price can differ slightly from the exchanges'.`
+      : ` Монета торгуется здесь как обёрнутый токен (${pool.name.split(" / ")[0]}); цена в пуле может немного отличаться от биржевой.`) : "");
   // The bar: the dollars bought against the dollars sold among the loaded trades.
   const total = buys + sells || 1;
   $("#trades-bar").hidden = false;

@@ -40,7 +40,10 @@ const list = (value) => (Array.isArray(value) ? value : Array.isArray(value?.dat
 // Each exchange's answer as { symbol, price, change24h %, high, low, volume $, oi $, funding % }.
 export function readExchange(name, answer, extra) {
   const rows = [];
-  const add = (symbol, fields) => { if (SYMBOL.test(symbol) && fields.price > 0) rows.push({ symbol, ...fields }); };
+  // The best bid and ask only where the exchange's ticker gives them.
+  const add = (symbol, { bid, ask, ...fields }) => {
+    if (SYMBOL.test(symbol) && fields.price > 0) rows.push({ symbol, ...fields, ...(bid > 0 ? { bid } : {}), ...(ask > 0 ? { ask } : {}) });
+  };
   if (name === "binance") {
     // Funding comes in a second list (premiumIndex); open interest is asked per coin there, so it is left out.
     const funding = new Map(list(extra).map((item) => [item?.symbol, num(item?.lastFundingRate)]));
@@ -54,14 +57,14 @@ export function readExchange(name, answer, extra) {
     for (const item of Array.isArray(answer?.result?.list) ? answer.result.list : []) {
       if (!new RegExp(`${QUOTE}$`).test(item?.symbol ?? "")) continue;
       add(item.symbol.slice(0, -QUOTE.length), { price: num(item.lastPrice), change24h: num(item.price24hPcnt) === null ? null : num(item.price24hPcnt) * 100,
-        high: num(item.highPrice24h), low: num(item.lowPrice24h), volume: num(item.turnover24h) ?? 0, oi: num(item.openInterestValue),
+        high: num(item.highPrice24h), low: num(item.lowPrice24h), volume: num(item.turnover24h) ?? 0, oi: num(item.openInterestValue), bid: num(item.bid1Price), ask: num(item.ask1Price),
         funding: num(item.fundingRate) === null ? null : num(item.fundingRate) * 100 });
     }
   } else if (name === "bitget") {
     for (const item of list(answer)) {
       if (!/U[S]DT$/.test(item?.symbol ?? "")) continue;
       const price = num(item.lastPr);
-      add(item.symbol.slice(0, -4), { price, change24h: num(item.change24h) === null ? null : num(item.change24h) * 100, high: num(item.high24h), low: num(item.low24h),
+      add(item.symbol.slice(0, -4), { price, change24h: num(item.change24h) === null ? null : num(item.change24h) * 100, high: num(item.high24h), low: num(item.low24h), bid: num(item.bidPr), ask: num(item.askPr),
         volume: num(item.usdtVolume) ?? 0, oi: num(item.holdingAmount) !== null && price ? num(item.holdingAmount) * price : null,
         funding: num(item.fundingRate) === null ? null : num(item.fundingRate) * 100 });
     }
@@ -72,7 +75,7 @@ export function readExchange(name, answer, extra) {
       if (!match) continue;
       const price = num(item.last);
       const open = num(item.open24h);
-      add(match[1], { price, change24h: open ? (price / open - 1) * 100 : null, high: num(item.high24h), low: num(item.low24h),
+      add(match[1], { price, change24h: open ? (price / open - 1) * 100 : null, high: num(item.high24h), low: num(item.low24h), bid: num(item.bidPx), ask: num(item.askPx),
         volume: (num(item.volCcy24h) ?? 0) * (price ?? 0), oi: oi.get(item.instId) ?? null, funding: null });
     }
   } else if (name === "gate") {
@@ -82,7 +85,7 @@ export function readExchange(name, answer, extra) {
       const price = num(item.last);
       const size = num(item.total_size);
       const multiplier = num(item.quanto_multiplier);
-      add(match[1], { price, change24h: num(item.change_percentage), high: num(item.high_24h), low: num(item.low_24h),
+      add(match[1], { price, change24h: num(item.change_percentage), high: num(item.high_24h), low: num(item.low_24h), bid: num(item.highest_bid), ask: num(item.lowest_ask),
         volume: num(item.volume_24h_quote) ?? 0, oi: size !== null && multiplier && price ? size * multiplier * price : null,
         funding: num(item.funding_rate) === null ? null : num(item.funding_rate) * 100 });
     }
@@ -91,7 +94,7 @@ export function readExchange(name, answer, extra) {
       const match = /^([A-Z0-9]+)_U[S]DT$/.exec(item?.symbol ?? "");
       if (!match) continue;
       add(match[1], { price: num(item.lastPrice), change24h: num(item.riseFallRate) === null ? null : num(item.riseFallRate) * 100,
-        high: num(item.high24Price), low: num(item.lower24Price), volume: num(item.amount24) ?? 0, oi: null,
+        high: num(item.high24Price), low: num(item.lower24Price), volume: num(item.amount24) ?? 0, oi: null, bid: num(item.bid1), ask: num(item.ask1),
         funding: num(item.fundingRate) === null ? null : num(item.fundingRate) * 100 });
     }
   }
@@ -117,13 +120,15 @@ export function merge(byExchange) {
     const weight = funded.reduce((sum, market) => sum + market.volume, 0);
     const oiMarkets = same.filter((market) => market.oi !== null);
     return {
-      symbol, price: lead.price, ch24h: lead.change24h, range24h: lead.high && lead.low ? (lead.high / lead.low - 1) * 100 : null,
+      // The day's change from the busiest market that reports a rolling 24 hours (MEXC counts from its midnight).
+      symbol, price: lead.price, ch24h: (same.filter((market) => market.change24h !== null && market.exchange !== "mexc")
+        .reduce((best, market) => (!best || market.volume > best.volume ? market : best), null) ?? lead).change24h, range24h: lead.high && lead.low ? (lead.high / lead.low - 1) * 100 : null,
       volume: same.reduce((sum, market) => sum + market.volume, 0),
       oi: oiMarkets.length ? oiMarkets.reduce((sum, market) => sum + market.oi, 0) : null,
       funding: weight ? funded.reduce((sum, market) => sum + market.funding * market.volume, 0) / weight : null,
       exchanges: same.map((market) => market.exchange).sort(),
       // Each exchange's own price and funding, for the arbitrage list (not sent with the trend rows).
-      markets: same.map((market) => ({ exchange: market.exchange, price: market.price, funding: market.funding, volume: market.volume })),
+      markets: same.map((market) => ({ exchange: market.exchange, price: market.price, bid: market.bid ?? null, ask: market.ask ?? null, funding: market.funding, volume: market.volume })),
     };
   });
 }
@@ -261,12 +266,17 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     for (const row of rows) {
       const markets = (row.markets ?? []).filter((market) => market.volume >= minVolume && market.price > 0);
       if (markets.length < 2) continue;
-      const low = markets.reduce((best, market) => (market.price < best.price ? market : best));
-      const high = markets.reduce((best, market) => (market.price > best.price ? market : best));
-      const spread = (high.price / low.price - 1) * 100;
+      // What can be done: buy at the ask where it is cheapest, sell at the bid where it is dearest (an exchange
+      // whose ticker has no book prices, Binance's, counts at its last price).
+      const ask = (market) => (market.ask > 0 ? market.ask : market.price);
+      const bid = (market) => (market.bid > 0 ? market.bid : market.price);
+      const low = markets.reduce((best, market) => (ask(market) < ask(best) ? market : best));
+      const high = markets.reduce((best, market) => (bid(market) > bid(best) ? market : best));
+      if (low === high) continue;
+      const spread = (bid(high) / ask(low) - 1) * 100;
       if (spread <= 0) continue;
       const coin = coinOf(row.symbol);
-      list.push({ symbol: row.symbol, spread, buy: low, sell: high, fundingGap: low.funding !== null && high.funding !== null ? high.funding - low.funding : null,
+      list.push({ symbol: row.symbol, spread, buy: { ...low, price: ask(low) }, sell: { ...high, price: bid(high) }, fundingGap: low.funding !== null && high.funding !== null ? high.funding - low.funding : null,
         volume: Math.min(low.volume, high.volume), markets: markets.length, ...(coin ? { id: coin.id, image: coin.image ?? null } : {}) });
     }
     return { updatedAt, exchanges, rows: list.sort((left, right) => right.spread - left.spread).slice(0, 500) };

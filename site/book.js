@@ -109,7 +109,10 @@ const amountText = (value) => {
   const digits = cfg.amountDigits ?? (Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 1 ? 2 : 4);
   return value.toLocaleString(locale(), { maximumFractionDigits: digits, minimumFractionDigits: cfg.amountDigits ?? 0 });
 };
-const unitText = (value, base) => (cfg.usd ? usdShort(value) : `${amountText(value)} ${base.toLowerCase()}`);
+// Money in the pair's quote: dollars for the stablecoin (and the exchanges quoting dollars), bitcoin for the BTC pairs.
+const money = (value) => (cfg.quote === "BTC" ? `${value.toLocaleString(locale(), { maximumSignificantDigits: 6 })} btc` : usdShort(value));
+const quotePrice = (value) => (cfg.quote === "BTC" ? `${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })} BTC` : price(value));
+const unitText = (value, base) => (cfg.usd ? money(value) : `${amountText(value)} ${base.toLowerCase()}`);
 
 // A book as shown: within the depth, its totals there (every order, the small ones too), the levels of at
 // least the smallest order, each with the volume from the price through it.
@@ -159,7 +162,9 @@ function renderControls() {
   $("#pair").value = cfg.base;
   $("#toggle-trades").classList.toggle("on", cfg.trades);
   $("#chart-box").hidden = !cfg.chart || cfg.mode !== "single";
-  $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${cfg.quote}`;
+  // The exchange's own quote (Coinbase and Kraken trade dollars, not the stablecoin), as it answered.
+  const answered = books.get(cfg.ex)?.data?.quote;
+  $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${answered ?? cfg.quote}`;
 }
 function renderConfig() {
   const first = [...books.values()].find((item) => item.data)?.data;
@@ -183,11 +188,11 @@ function sideTable(kind, shown, base) {
   head.innerHTML = `<tr><th class="left"></th><th></th></tr>`;
   head.querySelector("th").textContent = kind === "bid" ? t().bid : t().ask;
   // The unit in the head, so it reads plainly: coins (or dollars in dollar mode).
-  head.querySelectorAll("th")[1].textContent = `${t().amount}, ${cfg.usd ? "$" : base.toLowerCase()}`;
+  head.querySelectorAll("th")[1].textContent = `${t().amount}, ${cfg.usd ? (cfg.quote === "BTC" ? "btc" : "$") : base.toLowerCase()}`;
   const body = node("tbody");
   const sum = node("tr", "bk-total");
   sum.title = t().total;
-  sum.append(node("td", "left", usdShort(total.usd)), node("td", "", `${amountText(total.coin)} ${base.toLowerCase()}`));
+  sum.append(node("td", "left", money(total.usd)), node("td", "", `${amountText(total.coin)} ${base.toLowerCase()}`));
   body.append(sum);
   const biggest = Math.max(1e-12, ...list.map(([price, amount]) => sizeOf(price, amount)));
   if (!list.length) { const row = node("tr"); const cell = node("td", "muted ex-empty", t().none); cell.colSpan = 2; row.append(cell); body.append(row); }
@@ -197,7 +202,7 @@ function sideTable(kind, shown, base) {
     // On a pointer: every order from the price through this level, the small ones too.
     if (through) row.title = t().through(`${amountText(through)} ${base.toLowerCase()}`);
     row.style.setProperty("--fill", `${Math.round((size / biggest) * 100)}%`);
-    row.append(node("td", "left", priceText(price, shown.digits)), node("td", "", cfg.usd ? usdShort(size) : amountText(amount)));
+    row.append(node("td", "left", priceText(price, shown.digits)), node("td", "", cfg.usd ? money(size) : amountText(amount)));
     body.append(row);
   }
   table.append(head, body);
@@ -225,7 +230,7 @@ function tradesTable(shown, withExchange) {
     const line = node("tr", sizeOf(item.price, item.amount) >= limits.big ? "big" : "");
     line.append(node("td", "left muted", new Date(item.time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })),
       ...(withExchange ? [node("td", "left", exchanges.find((entry) => entry.id === item.ex)?.name ?? item.ex)] : []),
-      node("td", "", price(item.price)), node("td", "", cfg.usd ? usdShort(item.price * item.amount) : amountText(item.amount)),
+      node("td", "", quotePrice(item.price)), node("td", "", cfg.usd ? money(item.price * item.amount) : amountText(item.amount)),
       node("td", item.side === "buy" ? "up" : "down", item.side === "buy" ? t().buy : t().sell));
     body.append(line);
   }
@@ -247,7 +252,8 @@ function renderBooks() {
     const shown = view(data);
     const panel = node("section", "bk-book");
     if (cfg.mode === "multi") {
-      const title = node("h3", "bk-book-title", `${exchanges.find((item) => item.id === id)?.name ?? id} `);
+      // Each exchange's own pair: Coinbase and Kraken quote dollars, the others the stablecoin.
+      const title = node("h3", "bk-book-title", `${exchanges.find((item) => item.id === id)?.name ?? id} · ${data.base}/${data.quote} `);
       title.append(node("b", "", `(${priceText(data.price, shown.digits)})`));
       // The exchange's own thresholds: shown, and set from its gear.
       const own = node("button", "bk-own", `${unitText(shown.limits.min, data.base)} / ${unitText(shown.limits.big, data.base)} ⚙`);
@@ -314,7 +320,7 @@ function drawLevels() {
   for (const [list, color] of [[shown.bids, support], [shown.asks, resistance]]) {
     for (const [price, amount] of list) {
       if (!near(price) || sizeOf(price, amount) < shown.limits.big) continue;
-      lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: cfg.usd ? usdShort(price * amount) : amountText(amount) }));
+      lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: cfg.usd ? money(price * amount) : amountText(amount) }));
     }
   }
 }

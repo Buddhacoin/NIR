@@ -215,7 +215,17 @@ function renderHeatmap() {
     tile.className = `hm-tile ${change === null ? "" : change >= 0 ? "up" : "down"}`;
     Object.assign(tile.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, fontSize: `${Math.max(9, Math.min(18, Math.sqrt(w * h) / 4.5))}px` });
     tile.style.setProperty("--heat", change === null ? "0" : Math.min(1, 0.18 + Math.abs(change) / 6).toFixed(2));
-    if (w > 36 && h > 22) {
+    // The coin's logo on every tile with room for it, as on the big heatmap; the name too when it fits.
+    const named = w > 36 && h > 22;
+    const side = Math.min(w, h);
+    if (coin.image && (named ? h > 52 : side >= 12)) {
+      const image = logo(coin);
+      image.classList.add("hm-mini-logo");
+      const px = Math.round(Math.min(28, named ? h * 0.3 : side * 0.62));
+      Object.assign(image.style, { width: `${px}px`, height: `${px}px` });
+      tile.append(image);
+    }
+    if (named) {
       const name = document.createElement("b");
       name.textContent = coin.symbol;
       tile.append(name);
@@ -277,7 +287,8 @@ function renderCards() {
       return item;
     }));
   };
-  list("#trending", data.trending ?? [], true);
+  // The trending card shows the market list's row of each coin (the same price as the table), when it has one.
+  list("#trending", (data.trending ?? []).map((item) => data.coins?.find((coin) => coin.id === item.id) ?? data.trendingCoins?.find((coin) => coin.id === item.id) ?? item), true);
   // The day's top gainers among the top coins, without stablecoins.
   list("#gainers", (data.coins ?? []).filter((coin) => coin.change24h > 0 && !STABLE.has(coin.symbol))
     .sort((left, right) => right.change24h - left.change24h), false);

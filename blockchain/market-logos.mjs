@@ -117,8 +117,45 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
     try { return await job; } finally { pending.delete(id); }
   }
 
+  // A coin's picture from the market list (CoinGecko's, which carries no caching headers, so phones fetched
+  // it again on every page and the lists blinked): kept here once and sent for a month of browser cache.
+  async function coinPicture(id, size, name) {
+    const key = `coin-${id}-${size}-${name.replace(/[^A-Za-z0-9._-]/g, "")}`;
+    const path = join(dir, `${key}.img`);
+    if (existsSync(path)) return readFileSync(path);
+    if ((missing.get(key) ?? 0) > now()) return null;
+    if (pending.has(key)) return pending.get(key);
+    const job = (async () => {
+      for (const host of ["coin-images.coingecko.com", "assets.coingecko.com"]) {
+        try {
+          const bytes = await fetchBytes(`https://${host}/coins/images/${id}/${size}/${name}`);
+          if (!pictureKind(bytes)) continue;
+          writeFileSync(path, bytes);
+          return bytes;
+        } catch {}
+      }
+      missing.set(key, now() + 3_600_000);
+      return null;
+    })();
+    pending.set(key, job);
+    try { return await job; } finally { pending.delete(key); }
+  }
+
   // Answers GET /market/logo/…, or returns false.
   async function handle(request, response, url) {
+    const coin = /^\/market\/logo\/coin\/(\d{1,8})\/(thumb|small|large|standard)\/([A-Za-z0-9._-]{1,100})$/.exec(url.pathname);
+    if (coin && dir) {
+      const bytes = request.method === "GET" ? await coinPicture(coin[1], coin[2], coin[3]) : null;
+      if (!bytes) {
+        response.writeHead(404, { "content-type": "text/plain", "cache-control": "public, max-age=600" });
+        response.end("no picture");
+        return true;
+      }
+      response.writeHead(200, { "content-type": pictureKind(bytes), "cache-control": "public, max-age=2592000, immutable",
+        "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" });
+      response.end(bytes);
+      return true;
+    }
     const match = /^\/market\/logo\/([a-z]{2,12})\/([^/]+)$/.exec(url.pathname);
     if (!match || !dir) return false;
     const [, network, raw] = match;
@@ -134,5 +171,12 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
     response.end(bytes);
     return true;
   }
-  return { url, handle, picture };
+  // The market list's pictures fetched ahead, a few at a time, so they are ready before anyone asks.
+  async function warmCoins(images) {
+    for (const address of images) {
+      const found = /^https:\/\/(?:coin-images|assets)\.coingecko\.com\/coins\/images\/(\d{1,8})\/(thumb|small|large|standard)\/([A-Za-z0-9._-]{1,100})/.exec(address ?? "");
+      if (found && dir) await coinPicture(found[1], "large", found[3]).catch(() => null);
+    }
+  }
+  return { url, handle, picture, warmCoins };
 }

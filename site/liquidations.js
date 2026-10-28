@@ -30,7 +30,8 @@ const state = { period: "d1", size: 1e4, query: "" };
 const sort = { key: "total", dir: -1 };
 let data = null;
 
-const priceText = (value) => `$${value.toLocaleString(locale(), value >= 1 ? { maximumFractionDigits: value >= 1000 ? 1 : 4 } : { maximumSignificantDigits: 5 })}`;
+// The exchange's own price as it gives it (up to eight digits), not rounded off its tick.
+const priceText = (value) => `$${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })}`;
 const usd = (value) => (value >= 1e6 ? big(value) : `$${Math.round(value).toLocaleString(locale())}`);
 function coinCell(row) {
   const cell = node("span", "coin-cell");
