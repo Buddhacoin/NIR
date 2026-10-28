@@ -133,7 +133,7 @@ export function niceStep(raw) {
 // levels (the smaller ones only the smallest-order filter would hide anyway), best price first, each with
 // the volume of every order from the best price up to it; and the side's totals out to each whole per cent
 // of the price (totals[side][n - 1] = [coins, quote] within n %), so a page sums any depth it is set to.
-export function gatherBook({ bids, asks }, range = 1, keep = 800) {
+export function gatherBook({ bids, asks }, range = 1, keep = 800, nearest = 200) {
   const best = Math.max(0, ...bids.map(([price]) => price));
   const ask = Math.min(...asks.map(([price]) => price));
   const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
@@ -152,7 +152,8 @@ export function gatherBook({ bids, asks }, range = 1, keep = 800) {
     });
     for (let index = 1; index < 100; index += 1) { sums[index][0] += sums[index - 1][0]; sums[index][1] += sums[index - 1][1]; }
     totals[name] = sums.map(([amount, quote]) => [Number(amount.toPrecision(10)), Number(quote.toPrecision(10))]);
-    const biggest = new Set([...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep));
+    // The largest levels, and the nearest ones whatever their size, so the book starts at the price.
+    const biggest = new Set([...[...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep), ...withVolume.slice(0, nearest)]);
     return withVolume.filter((row) => biggest.has(row)).map(([level, amount, through]) => [level, Number(amount.toPrecision(10)), Number(through.toPrecision(10))]);
   };
   return { price: Number(price.toPrecision(10)), bids: side(bids, true, "bids"), asks: side(asks, false, "asks"), totals, levels: bids.length + asks.length };

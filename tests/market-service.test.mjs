@@ -448,7 +448,9 @@ test("the order book screener keeps the exchange's own levels with their totals 
   const { createBook, gatherBook, niceStep } = await import("../blockchain/market-book.mjs");
   assert.equal(niceStep(1.17), 2);
   assert.equal(niceStep(0.0031), 0.005);
-  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.9, 4], [100.1, 3]] }, 0.5, 2);
+  const gathered = gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5], [10, 5]], asks: [[100.9, 4], [100.1, 3]] }, 0.5, 2, 0);
+  assert.deepEqual(gatherBook({ bids: [[99.9, 1], [99.1, 2], [60, 5]], asks: [[100.1, 3]] }, 0.5, 1, 1).bids, [[99.9, 1, 1], [60, 5, 8]],
+    "the nearest levels stay whatever their size, so the book starts at the price");
   assert.equal(gathered.price, 100);
   assert.deepEqual(gathered.bids, [[99.1, 2, 3], [60, 5, 8]], "the exchange's own prices, the largest kept, each with the volume through it; one beyond the range is left out");
   assert.deepEqual(gathered.asks, [[100.1, 3, 3], [100.9, 4, 7]], "asks best first");

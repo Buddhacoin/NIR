@@ -90,12 +90,16 @@ function regroup(levels, step, down) {
 // levels show, a big one is among the eight biggest.
 const roundDown = (value) => { if (!(value > 0)) return 0; const power = 10 ** Math.floor(Math.log10(value)); return Math.floor(value / power * 2) / 2 * power; };
 // In the constructor each exchange may have its own (cfg.per[exchange]), as books differ in size.
-function thresholds(view, ex) {
-  const sizes = [...view.bids, ...view.asks].map(([price, amount]) => sizeOf(price, amount)).sort((left, right) => right - left);
-  const nth = (index) => sizes[Math.min(sizes.length - 1, index)] ?? 0;
+function thresholds(view, ex, price) {
+  const sorted = (list) => list.map(([level, amount]) => sizeOf(level, amount)).sort((left, right) => right - left);
+  const sizes = sorted([...view.bids, ...view.asks]);
+  // The smallest order shown is set by the levels next to the price (about twenty a side within 1%), as on
+  // the order-book tools, so the book starts at the market's price and not at the first far wall.
+  const close = sorted([...view.bids, ...view.asks].filter(([level]) => !price || Math.abs(level - price) / price <= 0.01));
+  const nth = (list, index) => list[Math.min(list.length - 1, index)] ?? 0;
   const own = cfg.mode === "multi" ? cfg.per?.[ex] ?? {} : {};
-  const min = own.minOrder ?? cfg.minOrder ?? roundDown(nth(40));
-  return { min, big: own.bigOrder ?? cfg.bigOrder ?? Math.max(min * 2, roundDown(nth(8))) };
+  const min = own.minOrder ?? cfg.minOrder ?? roundDown(nth(close.length ? close : sizes, 40));
+  return { min, big: own.bigOrder ?? cfg.bigOrder ?? Math.max(min * 2, roundDown(nth(sizes, 8))) };
 }
 // Decimals of the exchange's prices (its tick), read off the levels; a set step or setting wins.
 const decimalsOf = (value) => { const text = String(value); return text.includes("e-") ? Number(text.split("e-")[1]) : (text.split(".")[1] ?? "").length; };
@@ -120,7 +124,7 @@ function view(data) {
   }
   const digits = cfg.step ? digitsFor(cfg.step) : Math.min(8, Math.max(0, ...[...bids, ...asks].slice(0, 60).map(([price]) => decimalsOf(price))));
   const within = (list) => { const row = list?.[Math.min(100, Math.max(1, Math.round(cfg.depth))) - 1]; return { coin: row?.[0] ?? 0, usd: row?.[1] ?? 0 }; };
-  const limits = thresholds({ bids, asks }, data.ex);
+  const limits = thresholds({ bids, asks }, data.ex, data.price);
   const keep = (list) => list.filter(([price, amount]) => sizeOf(price, amount) >= limits.min).slice(0, 400);
   return { digits, step: cfg.step ?? 10 ** -digits, price: data.price, totals: { bids: within(data.totals?.bids), asks: within(data.totals?.asks) },
     bids: keep(bids), asks: keep(asks), limits };
@@ -496,7 +500,74 @@ function renderStats() {
 
 // --- Loading: the books and trades every two seconds, the candles every half minute.
 const query = (ex) => `ex=${encodeURIComponent(ex)}&base=${encodeURIComponent(cfg.base)}&quote=${encodeURIComponent(cfg.quote)}`;
-const getJson = (url) => fetch(url).then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))));
+const fetchJson = (url) => fetch(url).then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))));
+// Binance's spot market turns the server's country (the Netherlands) away, so when the server cannot read it
+// the visitor's browser reads it straight from Binance's market-data addresses, which allow any site.
+const getJson = (url) => {
+  const params = new URL(url, location.origin).searchParams;
+  if (!url.startsWith("/market/book?") && !url.startsWith("/market/book/") || params.get("ex") !== "binance") return fetchJson(url);
+  if (direct.on) return fromBinance(url, params);
+  return fetchJson(url).catch((error) => {
+    if (error.message !== "502") throw error;
+    direct.on = true;
+    return fromBinance(url, params);
+  });
+};
+const direct = { on: false, pair: null, far: null, farAt: 0 };
+const BINANCE = "https://data-api.binance.vision/api/v3";
+const levels = (list) => (Array.isArray(list) ? list : []).map(([price, amount]) => [Number(price), Number(amount)]).filter(([price, amount]) => price > 0 && amount > 0);
+async function fromBinance(url, params) {
+  const pair = `${params.get("base")}${params.get("quote")}`.toUpperCase();
+  if (url.startsWith("/market/book/trades")) {
+    const list = await fetchJson(`${BINANCE}/trades?symbol=${pair}&limit=500`);
+    return { trades: list.map((item) => ({ time: Number(item.time), price: Number(item.price), amount: Number(item.qty), side: item.isBuyerMaker ? "sell" : "buy" }))
+      .sort((left, right) => right.time - left.time) };
+  }
+  if (url.startsWith("/market/book/candles")) {
+    const list = await fetchJson(`${BINANCE}/klines?symbol=${pair}&interval=${params.get("tf") ?? "1h"}&limit=500`);
+    return { candles: list.map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[5]].map(Number)) };
+  }
+  // The whole 5,000 levels every ten seconds, the nearest 1,000 every two: within Binance's limits for one visitor.
+  if (direct.pair !== pair || Date.now() - direct.farAt > 10_000) {
+    const answer = await fetchJson(`${BINANCE}/depth?symbol=${pair}&limit=5000`);
+    Object.assign(direct, { pair, far: { bids: levels(answer.bids), asks: levels(answer.asks) }, farAt: Date.now() });
+  }
+  const near = await fetchJson(`${BINANCE}/depth?symbol=${pair}&limit=1000`);
+  const merge = (far, list, down) => {
+    const close = levels(list);
+    if (!close.length) return far;
+    const edge = close.at(-1)[0];
+    return [...close, ...far.filter(([price]) => (down ? price < edge : price > edge))];
+  };
+  const book = { bids: merge(direct.far.bids, near.bids, true), asks: merge(direct.far.asks, near.asks, false) };
+  return { ex: "binance", base: params.get("base"), quote: params.get("quote"), pair, ...gatherBook(book), at: Date.now() };
+}
+// The server's reading of a book (blockchain/market-book.mjs gatherBook), for a book read in the browser: each
+// side's 800 largest levels with the volume from the best price through each, and the totals per whole per cent.
+function gatherBook({ bids, asks }, keep = 800) {
+  const best = Math.max(0, ...bids.map(([price]) => price));
+  const ask = Math.min(...asks.map(([price]) => price));
+  const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
+  if (!price) return { price: null, bids: [], asks: [], totals: { bids: [], asks: [] } };
+  const totals = {};
+  const side = (list, down, name) => {
+    const sorted = list.filter(([level]) => Math.abs(level - price) / price <= 1).sort((left, right) => (down ? right[0] - left[0] : left[0] - right[0]));
+    const sums = Array.from({ length: 100 }, () => [0, 0]);
+    let coins = 0;
+    const withVolume = sorted.map(([level, amount]) => {
+      coins += amount;
+      const percent = Math.min(100, Math.max(1, Math.ceil((Math.abs(level - price) / price) * 100 - 1e-9)));
+      sums[percent - 1][0] += amount;
+      sums[percent - 1][1] += amount * level;
+      return [level, amount, coins];
+    });
+    for (let index = 1; index < 100; index += 1) { sums[index][0] += sums[index - 1][0]; sums[index][1] += sums[index - 1][1]; }
+    totals[name] = sums;
+    const biggest = new Set([...[...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep), ...withVolume.slice(0, 200)]);
+    return withVolume.filter((row) => biggest.has(row));
+  };
+  return { price, bids: side(bids, true, "bids"), asks: side(asks, false, "asks"), totals, levels: bids.length + asks.length };
+}
 let generation = 0;
 async function loadBooks() {
   if (cfg.mode === "stats") return;

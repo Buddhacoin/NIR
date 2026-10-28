@@ -1511,3 +1511,7 @@ body.watching .explain { display: none; }
 .about li { margin: 0 0 8px; }
 .about li b a { color: var(--text); text-decoration: none; }
 html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { display: none; }
+/* The amounts start in the middle of each side, as on the order-book tools. */
+.bk-side { table-layout: fixed; }
+.bk-side th:first-child, .bk-side td:first-child { width: 50%; }
+.bk-side th:nth-child(2), .bk-side td:nth-child(2) { text-align: left; }
