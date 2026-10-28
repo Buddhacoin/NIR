@@ -20,7 +20,7 @@ const en = {
   noTrackers: "No trackers", aboutNir: "About the NIR blockchain →", howItWorks: "How it works", privacy: "Privacy", terms: "Terms",
   briefShort: "✦ Summary", barMarkets: "Markets", barMine: "Mining", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", mineArrow: "Mine →",
   chipFear: "📈 Fear & Greed Index", chipDominance: "🥧 BTC and ETH dominance", chipTrending: "🔥 Trending", colSupply: "Circulating supply", allTransfers: "All transfers", colSentiment: "Sentiment",
-  dataBy: "Data:",
+  dataBy: "Data:", dataExchanges: "exchanges",
 };
 const words = {
   ru: { moodTitle: (rise, fall) => `Голоса за 7 дней: рост ${rise}, падение ${fall}`, communityTitle: "Голоса сообщества CoinGecko за сутки: доля «рост»", rate: "Оценить", rateTitle: "Голосов пока нет — оцените первым", empty: "Ничего не найдено", watchEmpty: "Нажмите ☆ у монеты в таблице или на её странице, чтобы добавить её в избранное.",

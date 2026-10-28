@@ -19,6 +19,7 @@ import { createPatoshi } from "./market-patoshi.mjs";
 import { createLiquidations } from "./market-liquidations.mjs";
 import { createLogos } from "./market-logos.mjs";
 import { createMarketService } from "./market-service.mjs";
+import { createPrices } from "./market-prices.mjs";
 
 const args = process.argv.slice(2);
 const fixtureAt = args.indexOf("--fixture");
@@ -84,6 +85,8 @@ const service = createMarketService(fixture ? {
     }
   },
 } : { accounts, chain, screener, densities, liquidations, book, cacheFile: env.NIR_MARKET_DB ? join(dirname(env.NIR_MARKET_DB), "cache.db") : null,
+  // The exchanges' own spot prices over CoinGecko's, every 20 seconds (market-prices.mjs).
+  prices: createPrices({ get: fetchExplorer }),
   // The coin page's HTML, for the copy with the coin's name and price in it (market-seo.mjs).
   coinTemplate: () => { try { return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "site", "coin", "index.html"), "utf8"); } catch { return null; } } });
 service.server.listen(port, "127.0.0.1", () => console.log(`NIR Markets data on 127.0.0.1:${port}`));

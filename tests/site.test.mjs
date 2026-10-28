@@ -50,7 +50,7 @@ test("the markets home page has English for every text and links to NIR", () => 
   assert.match(html, /<a href="\/nir\/">[^\n]*data-i18n="navNir"/, "the menu leads to the NIR page");
   assert.match(html, /<a href="\/#watch" data-member hidden>/, "the watchlist link is for signed-in visitors");
   // CoinGecko's free plan asks for credit; TradingView credits itself inside its chart.
-  assert.match(html, /<span data-i18n="dataBy">Данные:<\/span> CoinGecko/);
+  assert.match(html, /<span data-i18n="dataBy">Данные:<\/span> <span data-i18n="dataExchanges">биржи<\/span>, CoinGecko/);
   assert.match(script, /fetch\("\/market\/overview"/);
   assert.match(read("site/common.js"), /fetch\("\/api\/v1\/stats"/);
   assert.match(script, /location\.href = coinUrl\(coin\)/, "a coin's row opens its page");
