@@ -1,8 +1,5 @@
 /* NIR Markets. Day: the white, blue-accented look of the big market sites.
    Night: near-black with neutral grey cards and a blue accent. Orange stays only in the NIR coin. */
-/* Moving between the site's pages: the next page fades in over this one instead of a blank flash. */
-@view-transition { navigation: auto; }
-
 :root {
   /* Night follows the on-chain analytics sites: near-black, neutral greys, white text, a blue accent. */
   --bg: #000000; --panel: #0e0e0f; --panel2: #141415; --line: #ffffff17; --text: #f2f2f2; --muted: #8e8e93;
@@ -15,14 +12,14 @@
 :root[data-theme="light"] {
   --bg: #ffffff; --panel: #ffffff; --panel2: #ffffff; --line: #eff2f5; --text: #0d1421; --muted: #616e85;
     --accent: #3861fb; --accent2: #6188ff; --gold: #f5b97f; --up: #16c784; --down: #ea3943;
-    --btn: #3861fb; --btn-text: #ffffff; --soft: #f8fafd; --tint: #f0f6ff; --card: #ffffff; --shadow: 0 1px 2px #58667e1f, 0 4px 24px #58667e14;
+    --btn: #111318; --btn-text: #ffffff; --soft: #f8fafd; --tint: #f0f6ff; --card: #ffffff; --shadow: 0 1px 2px #58667e1f, 0 4px 24px #58667e14;
     --page: #ffffff; color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #ffffff; --panel: #ffffff; --panel2: #ffffff; --line: #eff2f5; --text: #0d1421; --muted: #616e85;
     --accent: #3861fb; --accent2: #6188ff; --gold: #f5b97f; --up: #16c784; --down: #ea3943;
-    --btn: #3861fb; --btn-text: #ffffff; --soft: #f8fafd; --tint: #f0f6ff; --card: #ffffff; --shadow: 0 1px 2px #58667e1f, 0 4px 24px #58667e14;
+    --btn: #111318; --btn-text: #ffffff; --soft: #f8fafd; --tint: #f0f6ff; --card: #ffffff; --shadow: 0 1px 2px #58667e1f, 0 4px 24px #58667e14;
     --page: #ffffff; color-scheme: light;
   }
 }
@@ -1548,4 +1545,32 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   #track { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z'/%3E%3Cpath d='M10 21h4'/%3E%3C/svg%3E"); }
   #share { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 8l5-5 5 5'/%3E%3Cpath d='M5 13v7h14v-7'/%3E%3C/svg%3E"); }
   #suggest { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M13 7l4 4'/%3E%3C/svg%3E"); }
+}
+/* Big orders stand out on both sides, as on the order-book tools: a stronger bar, a light band over the
+   row and an edge in the side's colour (the asks' bar rule is more specific, so these name both sides). */
+.bk-side.bid tbody tr.big:not(.bk-total) { --bar: color-mix(in srgb, var(--up) 55%, transparent); }
+.bk-side.ask tbody tr.big:not(.bk-total) { --bar: color-mix(in srgb, var(--down) 55%, transparent); }
+.bk-side.bid tbody tr.big:not(.bk-total), .bk-side.ask tbody tr.big:not(.bk-total) { background-color: color-mix(in srgb, var(--text) 14%, transparent); }
+.bk-side.bid tbody tr.big:not(.bk-total) { box-shadow: inset -4px 0 0 var(--up); }
+.bk-side.ask tbody tr.big:not(.bk-total) { box-shadow: inset 4px 0 0 var(--down); }
+/* The price step sits with the book, as on the exchanges' books. */
+.bk-book-bar { display: flex; justify-content: flex-end; margin: 4px 0 6px; }
+.bk-book-bar[hidden] { display: none; }
+.bk-step { display: flex; align-items: center; gap: 8px; }
+.bk-step select { padding: 6px 28px 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--text); font: inherit; font-size: 13px; }
+
+/* Day theme: what is chosen or pressed is black with white letters (a pale grey "on" was hard to see), and the
+   blue buttons are black too (--btn above). */
+:root[data-theme="light"] .sc-tabs a.on, :root[data-theme="light"] .seg button.on, :root[data-theme="light"] .seg.kinds button.on, :root[data-theme="light"] .ranges.seg button.on, :root[data-theme="light"] .ex-ptabs button.on, :root[data-theme="light"] .dash-tabs > .dash-plus,
+  :root[data-theme="light"] .pill.on, :root[data-theme="light"] .bk-tools .pill.on, :root[data-theme="light"] #pages a.on { border-color: #111318; background: #111318; color: #fff; box-shadow: none; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .sc-tabs a.on, :root:not([data-theme="dark"]) .seg button.on, :root:not([data-theme="dark"]) .seg.kinds button.on, :root:not([data-theme="dark"]) .ranges.seg button.on, :root:not([data-theme="dark"]) .ex-ptabs button.on, :root:not([data-theme="dark"]) .dash-tabs > .dash-plus,
+  :root:not([data-theme="dark"]) .pill.on, :root:not([data-theme="dark"]) .bk-tools .pill.on, :root:not([data-theme="dark"]) #pages a.on { border-color: #111318; background: #111318; color: #fff; box-shadow: none; }
+}
+.pf-email { overflow-wrap: anywhere; }
+/* Phones, before the scripts run: the header already as it ends up (the search box is wrapped and hidden by
+   common.js; "Markets" beside the logo goes for the buttons), so the first frame does not jump. */
+@media (max-width: 700px) {
+  .top > .search { display: none; }
+  .top .brand small { display: none; }
 }

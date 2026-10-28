@@ -77,5 +77,14 @@ export function createLedger({ file = ":memory:", now = Date.now, cap = 3_000_00
     GROUP BY sender HAVING COUNT(DISTINCT receiver) = 1 AND COUNT(*) >= ? LIMIT ?`);
   const singleReceivers = (since = 0, least = 2, limit = 200_000) => forwarders.all(since, least, limit)
     .map((row) => ({ sender: row.sender, receiver: row.receiver, count: Number(row.n) }));
-  return { store, rows, crawled, markCrawled, size, singleReceivers, close: () => db.close() };
+  // How many transfers a wallet sent since a time (a hot wallet pays out about as often as it takes in).
+  const sentSince = db.prepare("SELECT COUNT(*) AS n FROM transfers WHERE sender = ? AND time > ?");
+  const sentCount = (address, since = 0) => Number(sentSince.get(address, since)?.n ?? 0);
+  // The wallets the most money moved through since a time (sent and received, in dollars): the whales.
+  const busiestSince = db.prepare(`SELECT address, SUM(usd) AS usd, COUNT(*) AS n FROM (
+      SELECT sender AS address, usd FROM transfers WHERE time > ? AND usd IS NOT NULL
+      UNION ALL SELECT receiver AS address, usd FROM transfers WHERE time > ? AND usd IS NOT NULL)
+    GROUP BY address ORDER BY usd DESC LIMIT ?`);
+  const busiest = (since = 0, limit = 100) => busiestSince.all(since, since, limit).map((row) => ({ address: row.address, usd: Number(row.usd), transfers: Number(row.n) }));
+  return { store, rows, crawled, markCrawled, size, singleReceivers, sent: sentCount, busiest, close: () => db.close() };
 }

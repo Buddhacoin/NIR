@@ -143,6 +143,8 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
   let exchanges = [];
   // New markets: every exchange's coins seen so far, and the ones that appeared since.
   const listed = new Set(); // "exchange:symbol"
+  const listingKeys = new Set(); // "exchange:symbol" of the listings, whose price on their exchange is followed
+  const lastPrices = new Map(); // "exchange:symbol" → its last price there
   const watched = new Set(); // exchanges whose whole list has been seen once
   let listings = []; // [{ symbol, exchange, at, price }]
   let listingsSince = null;
@@ -217,13 +219,15 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
     }
     if (!Object.keys(byExchange).length) return false;
     const at = now();
+    for (const item of listings) listingKeys.add(`${item.exchange}:${item.symbol}`); // those kept from before a restart too
     // A coin new to an exchange whose list was seen before is a listing; the first list only counts as known.
     for (const [name, list] of Object.entries(byExchange)) {
       for (const row of list) {
         const key = `${name}:${row.symbol}`;
+        if (listingKeys.has(key)) lastPrices.set(key, row.price); // a listing's price now, on its own exchange
         if (listed.has(key)) continue;
         listed.add(key);
-        if (watched.has(name)) listings.push({ symbol: row.symbol, exchange: name, at, price: row.price });
+        if (watched.has(name)) { listings.push({ symbol: row.symbol, exchange: name, at, price: row.price }); listingKeys.add(key); lastPrices.set(key, row.price); }
       }
       if (!watched.has(name)) { watched.add(name); listingsSince ??= at; }
     }
@@ -292,8 +296,9 @@ export function createScreener({ get, now = Date.now, every = 60_000, keep = 1_5
   // The new markets, newest first, with the coin's price now against its price when it appeared.
   function newListings() {
     const prices = new Map(rows.map((row) => [row.symbol, row.price]));
+    // The price on the exchange that listed it; the coin's market price when that is not known.
     return { updatedAt, since: listingsSince, rows: [...listings].reverse().map((item) => {
-      const price = prices.get(item.symbol) ?? null;
+      const price = lastPrices.get(`${item.exchange}:${item.symbol}`) ?? prices.get(item.symbol) ?? null;
       const coin = coinOf(item.symbol);
       return { ...item, now: price, change: price && item.price ? (price / item.price - 1) * 100 : null, ...(coin ? { id: coin.id, image: coin.image ?? null } : {}) };
     }) };

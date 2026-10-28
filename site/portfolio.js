@@ -358,9 +358,13 @@ async function renderCharts(list) {
   const held = list.filter((item) => item.amount > 1e-12).sort((left, right) => (right.value ?? 0) - (left.value ?? 0));
   if (!held.length && !list.length) return;
   // A chart already drawn stays until the new one is ready (a refresh does not blank it); only an empty box says it is building.
+  // "Building the chart" shows only if it takes a moment (a kept chart is drawn before the eye sees an empty box).
   const empty = (box) => !box.querySelector("svg");
-  if (view === "history" && empty($("#plot"))) $("#plot").replaceChildren(node("p", "status", t().chartLoading));
-  if (empty($("#perf"))) $("#perf").replaceChildren(node("p", "status", t().chartLoading));
+  setTimeout(() => {
+    if (ticket !== drawn) return;
+    if (view === "history" && empty($("#plot"))) $("#plot").replaceChildren(node("p", "status", t().chartLoading));
+    if (empty($("#perf"))) $("#perf").replaceChildren(node("p", "status", t().chartLoading));
+  }, 400);
   // "All" reaches back to the first transaction, up to a year.
   const first = Math.min(...chosen().map((record) => record.at));
   const range = days === "all" ? ["1", "7", "30", "90", "365"].find((option) => Date.now() - Number(option) * 86_400_000 <= first) ?? "365" : days;
@@ -890,6 +894,17 @@ let resized = null;
 new ResizeObserver(() => { clearTimeout(resized); resized = setTimeout(() => { if (loaded && !$("#filled").hidden) void renderCharts(holdings()); }, 200); }).observe($("#plot"));
 
 setupSearch({ overview: () => market });
+// The first frame from the last answers (common.js keptJson): the signed-in visitor's portfolio and the market's
+// prices, so the page opens with its figures instead of $0 and fills in place when the fresh ones come.
+if (account.user) {
+  const kept = keptJson("/market/me/portfolio");
+  market = keptJson("/market/overview") ?? market;
+  if (kept) {
+    ({ portfolios, transactions: records } = kept);
+    for (const coin of market?.coins ?? []) remember(coin);
+    loaded = true;
+  }
+}
 setupPage({ en, render, onAccount: () => { void load(); } });
 // Without an answer about the account, the portfolios kept in this browser are shown.
 setTimeout(() => { if (!loaded) void load(); }, 5000);

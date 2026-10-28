@@ -608,8 +608,11 @@ test("wallets' behaviour names deposit addresses and finds likely hot wallets, n
   ledger.store([...Array.from({ length: 10 }, (_, index) => [send(wallet(100 + index), hot), send(wallet(100 + index), hot)]).flat(),
     send(wallet(200), hot), send(wallet(201), hot), send(wallet(201), hot), send(wallet(201), unknown),
     send(wallet(50), hot), send(wallet(50), hot),
-    // Thirty single-target senders feed an address nobody named.
-    ...Array.from({ length: 30 }, (_, index) => [send(wallet(300 + index), unknown), send(wallet(300 + index), unknown)]).flat()]);
+    // Thirty single-target senders feed an address nobody named, which pays out as often.
+    ...Array.from({ length: 30 }, (_, index) => [send(wallet(300 + index), unknown), send(wallet(300 + index), unknown), send(unknown, wallet(600 + index))]).flat(),
+    // Thirty more send keepsakes to an address that never pays out: not a hot wallet.
+    ...Array.from({ length: 30 }, (_, index) => [send(wallet(400 + index), wallet(3)), send(wallet(400 + index), wallet(3))]).flat()]);
+  names.infer([{ address: wallet(3), name: null, category: "exchange" }]); // an earlier guess, taken back
   const behaviour = createBehaviour({ ledger, names, now: () => 2_000 });
   const result = behaviour.run();
   assert.ok(result.added >= 11);
@@ -618,6 +621,8 @@ test("wallets' behaviour names deposit addresses and finds likely hot wallets, n
   assert.equal(names.name(wallet(201)), null, "a wallet that pays two places is not a deposit address");
   assert.equal(names.name(wallet(50)).name, "Alice", "a name from another source stays");
   assert.deepEqual([names.name(unknown).name, names.name(unknown).category, names.name(unknown).guessed], [null, "exchange", true]);
+  assert.equal(names.name(wallet(3)), null, "a wallet that only takes in is not a hot wallet; the earlier guess is taken back");
+  assert.equal(result.retracted, 1);
   assert.equal(names.history(wallet(100)).at(-1).source, "behaviour");
   assert.deepEqual(guessFromBehaviour([], () => null), []);
 });

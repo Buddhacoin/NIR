@@ -20,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=87">
+  <link rel="stylesheet" href="/markets.css?v=90">
 </head>
 <body>
   <div class="nirbar">
@@ -62,6 +62,7 @@
         <input class="ex-token" id="filter" type="search" placeholder="Имя или адрес" autocomplete="off">
       </div>
       <p class="muted ex-note" data-i18n="intro">Тысячи известных кошельков: биржи, фонды, маркет-мейкеры, государство и известные люди. Имена и логотипы — из открытой базы меток. Откройте любой, чтобы увидеть активы, историю и переводы, и нажмите «Отследить», чтобы он появился в вашем профиле.</p>
+      <p class="muted ex-note" id="group-note" hidden></p>
       <div class="table-wrap">
         <table class="ex-table ex-wallets">
           <thead><tr><th class="left">#</th><th class="left" data-i18n="colWallet">Кошелёк</th><th class="left" data-i18n="colKind">Тип и организация</th><th class="left" data-i18n="colNetworks">Сети</th><th data-sort="total" data-i18n="colTotal">Баланс</th><th></th></tr></thead>
@@ -102,7 +103,7 @@
     <a href="/nir/#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=42"></script>
-  <script src="/wallets.js?v=13"></script>
+  <script src="/common.js?v=45"></script>
+  <script src="/wallets.js?v=15"></script>
 </body>
 </html>

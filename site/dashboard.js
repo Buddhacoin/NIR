@@ -564,7 +564,10 @@ function renderDashboard() {
     const day = byToken(assets).reduce((sum, row) => sum + (changeOver(row.usd, marketCoin(row.token)?.change24h) ?? 0), 0);
     // The total stands next to the owner's name, as on the analytics sites.
     const head = $("#profile-total") ?? root.querySelector(".dash-total");
-    head.replaceChildren(dashNode("b", "", price(total)), " ", signedUsd(day));
+    // Until some wallet's balance is in, no sum (a "$0" that then jumps to the real one reads as a blink).
+    const counted = ownAccounts().some((item) => holdingsOf(item.address));
+    if (counted || !ownAccounts().length) head.replaceChildren(dashNode("b", "", price(total)), " ", signedUsd(day));
+    else head.replaceChildren();
     const select = document.querySelector(".dash-network");
     const chains = [...new Set(ownAccounts().flatMap((item) => (holdingsOf(item.address)?.assets ?? []).map((asset) => asset.chain)))];
     select.replaceChildren(...[["all", words.allNetworks], ...chains.map((chain) => [chain, CHAINS[chain]?.name ?? chain])].map(([value, text]) => {

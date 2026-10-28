@@ -18,7 +18,7 @@ const en = {
 };
 const words = {
   ru: { loading: "Загружаю профиль…", missing: "Такого профиля нет.", unavailable: "Профиль временно недоступен.",
-    since: (date) => `на NIR Markets с ${date}`, joined: "Присоединился к NIR Markets", profile: "Обновил профиль",
+    since: (date) => `на NIR Markets с ${date}`, email: (address) => `Вход: ${address} · видно только вам`, joined: "Присоединился к NIR Markets", profile: "Обновил профиль",
     watch: "Добавил в избранное", comment: "Написал о", noComments: "Комментариев пока нет.", noActivity: "Пока здесь пусто.", noWatch: "В избранном пока ничего нет. Нажмите ☆ у монеты.",
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
     addAddress: "Адрес кошелька (0x… или bc1…)", addLabel: "Подпись (необязательно)", add: "Добавить", badAddress: "Это не адрес кошелька.",
@@ -27,7 +27,7 @@ const words = {
     remove: "Убрать", loadingWallet: "загружаю…", asset: "Актив", amount: "Количество", value: "Сумма",
     noSuggestions: "Новых подписей на проверку нет.", approve: "Одобрить", reject: "Отклонить", source: "источник", by: "от" },
   en: { loading: "Loading the profile…", missing: "There is no such profile.", unavailable: "The profile is unavailable right now.",
-    since: (date) => `on NIR Markets since ${date}`, joined: "Joined NIR Markets", profile: "Updated the profile",
+    since: (date) => `on NIR Markets since ${date}`, email: (address) => `Signed in as ${address} · only you see this`, joined: "Joined NIR Markets", profile: "Updated the profile",
     watch: "Added to the watchlist", comment: "Commented on", noComments: "No comments yet.", noActivity: "Nothing here yet.", noWatch: "The watchlist is empty. Tap ☆ next to a coin.",
     title: (user) => `${user.displayName} (@${user.username}) — NIR Markets`,
     addAddress: "Wallet address (0x… or bc1…)", addLabel: "Label (optional)", add: "Add", badAddress: "This is not a wallet address.",
@@ -264,6 +264,9 @@ function render() {
   $("#joined").textContent = t().since(new Date(user.joinedAt).toLocaleDateString(locale(), { day: "numeric", month: "long", year: "numeric" }));
   $("#bio").textContent = user.bio;
   $("#bio").hidden = !user.bio;
+  // The address the owner signed in with (several Google accounts can each have a page): shown to them only.
+  $("#email").hidden = !own || !account.email;
+  $("#email").textContent = own && account.email ? t().email(account.email) : "";
   $("#own-actions").hidden = !own;
   $("#tab-watch").hidden = !own;
   $("#tab-wallets").hidden = !own;
@@ -361,6 +364,8 @@ $("#find").addEventListener("click", () => {
 });
 
 setupSearch({ overview: () => market });
+// The first frame from the last answer for this profile (common.js keptJson).
+if (/^[a-z0-9_]{3,20}$/.test(name)) page = keptJson(`/market/u/${encodeURIComponent(name)}`) ?? page;
 setupPage({ en, render });
 fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).then((data) => { market = data; render(); }).catch(() => {});
 void load();

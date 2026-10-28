@@ -303,6 +303,16 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     } catch (error) { db.exec("ROLLBACK"); throw error; }
     return added;
   }
+  // The newest names found from wallets' behaviour (deposit addresses, likely hot wallets), for the popular list.
+  const found = (limit = 100) => sql("SELECT address, name, entity, category, checked_at AS at FROM wallet_names WHERE source = 'behaviour' ORDER BY checked_at DESC LIMIT ?")
+    .all(limit).map((row) => ({ ...row }));
+  // Behaviour guesses that no longer hold (a category without a name, from behaviour only) are taken back.
+  function retract(addresses) {
+    const drop = sql("DELETE FROM wallet_names WHERE address = ? AND source = 'behaviour' AND name IS NULL");
+    let removed = 0;
+    for (const address of addresses ?? []) { removed += Number(drop.run(String(address).toLowerCase()).changes); known.delete(String(address).toLowerCase()); }
+    return removed;
+  }
   // Every attribution an address had, oldest first.
   const history = (address) => sql("SELECT name, entity, category, source, at FROM label_history WHERE address = ? ORDER BY at, rowid")
     .all(String(address ?? "").toLowerCase()).map((row) => ({ ...row }));
@@ -316,5 +326,5 @@ export function createNames({ get, now = Date.now, ttl = 86_400_000, retry = 600
     return rows.length;
   }
   const counts = () => Object.fromEntries(sql("SELECT IFNULL(category, 'none') AS category, COUNT(*) AS n FROM wallet_names GROUP BY 1").all().map((row) => [row.category, Number(row.n)]));
-  return { lookup, name, directory, remember, search, count, crawl, start, members, importBook, importBooks, infer, history, backfill, counts, entityCategory };
+  return { lookup, name, directory, remember, search, count, crawl, start, members, importBook, importBooks, infer, retract, found, history, backfill, counts, entityCategory };
 }
