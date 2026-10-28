@@ -66,7 +66,7 @@ Measured on a phone-sized browser recording, frame by frame (10 a second), movin
 - cross-page view transitions were dropped (the browser aborted them on most moves).
 A wallet's holdings and coin charts join the kept answers (a partial wallet answer is never kept). The wallet lists show the server's last whole sum of each wallet at once (`GET /market/chain/totals`, kept in `totals.json` and refreshed every quarter of an hour for the wallets lists ask about).
 
-In the day theme what is chosen or pressed is black with white letters, and the blue buttons are black. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
+What is chosen (tabs, switches, pressed pills) has one look across the site: the button colour with white letters — blue at night, black by day; a table's own tabs keep their quiet look. The browser tab's icon is the worn N on black, as on the home screen. A profile's tracked wallets' sum stands in its Portfolio panel ("Total"), not beside the owner's name, where it read as the visitor's own money. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
 
 ## Search engines
 
