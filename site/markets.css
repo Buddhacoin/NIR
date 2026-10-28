@@ -1533,7 +1533,7 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   .ex-head .ex-actions { grid-row: 1; grid-column: 3; flex-wrap: nowrap; gap: 0; }
   .ex-head .ex-address, .ex-head .ex-total, .ex-head .ex-tags { grid-column: 1 / -1; }
   .ex-head .ex-address code { font-size: 12px; }
-  .ex-head .ex-tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+  .ex-head .ex-tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -12px; padding: 0 12px; }
   .ex-head .ex-tags::-webkit-scrollbar { display: none; }
   .ex-head .ex-tags > * { flex: none; }
   .ex-head .ex-actions .act { display: grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; background: none; color: var(--text); font-size: 0; }
@@ -1541,6 +1541,9 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   .ex-head .ex-actions .act.on { color: var(--up); }
   .ex-head .ex-actions .act > *, .ex-head .ex-actions .act::after { display: none; }
   .ex-head .ex-tags { padding-bottom: 4px; }
+  /* An action without its own picture (an organisation's follow) takes the star. */
+  .ex-head .ex-actions .act { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z'/%3E%3C/svg%3E"); }
+  #follow { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z'/%3E%3Cpath d='M10 21h4'/%3E%3C/svg%3E"); }
   #visualize { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Ccircle cx='5' cy='5' r='2'/%3E%3Ccircle cx='19' cy='5' r='2'/%3E%3Ccircle cx='5' cy='19' r='2'/%3E%3Ccircle cx='19' cy='19' r='2'/%3E%3Cpath d='M6.5 6.5l3.4 3.4M17.5 6.5l-3.4 3.4M6.5 17.5l3.4-3.4M17.5 17.5l-3.4-3.4'/%3E%3C/svg%3E"); }
   #track { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z'/%3E%3Cpath d='M10 21h4'/%3E%3C/svg%3E"); }
   #share { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 8l5-5 5 5'/%3E%3Cpath d='M5 13v7h14v-7'/%3E%3C/svg%3E"); }
@@ -1559,14 +1562,10 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
 .bk-step { display: flex; align-items: center; gap: 8px; }
 .bk-step select { padding: 6px 28px 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--text); font: inherit; font-size: 13px; }
 
-/* Day theme: what is chosen or pressed is black with white letters (a pale grey "on" was hard to see), and the
-   blue buttons are black too (--btn above). */
-:root[data-theme="light"] .sc-tabs a.on, :root[data-theme="light"] .seg button.on, :root[data-theme="light"] .seg.kinds button.on, :root[data-theme="light"] .ranges.seg button.on, :root[data-theme="light"] .ex-ptabs button.on, :root[data-theme="light"] .dash-tabs > .dash-plus,
-  :root[data-theme="light"] .pill.on, :root[data-theme="light"] .bk-tools .pill.on, :root[data-theme="light"] #pages a.on { border-color: #111318; background: #111318; color: #fff; box-shadow: none; }
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) .sc-tabs a.on, :root:not([data-theme="dark"]) .seg button.on, :root:not([data-theme="dark"]) .seg.kinds button.on, :root:not([data-theme="dark"]) .ranges.seg button.on, :root:not([data-theme="dark"]) .ex-ptabs button.on, :root:not([data-theme="dark"]) .dash-tabs > .dash-plus,
-  :root:not([data-theme="dark"]) .pill.on, :root:not([data-theme="dark"]) .bk-tools .pill.on, :root:not([data-theme="dark"]) #pages a.on { border-color: #111318; background: #111318; color: #fff; box-shadow: none; }
-}
+/* One look for what is chosen across the site: the button colour — blue at night, black by day (--btn) —
+   with white letters; a table's tabs keep their own quiet look. */
+.sc-tabs a.on, .seg button.on, .seg.kinds button.on, .ranges.seg button.on, .pill.on, .bk-tools .pill.on, #pages a.on {
+  border-color: var(--btn); background: var(--btn); color: var(--btn-text); box-shadow: none; }
 .pf-email { overflow-wrap: anywhere; }
 /* Phones, before the scripts run: the header already as it ends up (the search box is wrapped and hidden by
    common.js; "Markets" beside the logo goes for the buttons), so the first frame does not jump. */
@@ -1574,3 +1573,5 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   .top > .search { display: none; }
   .top .brand small { display: none; }
 }
+.dash-sum { display: flex; align-items: baseline; gap: 8px; padding: 12px 16px 4px; }
+.dash-sum b { font-size: 22px; font-weight: 850; font-variant-numeric: tabular-nums; }

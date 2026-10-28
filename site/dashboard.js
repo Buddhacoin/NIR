@@ -105,6 +105,7 @@ function tabStrip(items, current, choose) {
 }
 
 // --- 1. Portfolio: by token, by network, or the archive comparing two dates.
+let dashSum = null; // { total, day } of the chosen wallets, once a balance is in
 function renderPortfolio(box) {
   const words = dw();
   const assets = chosenAssets();
@@ -147,6 +148,12 @@ function renderPortfolio(box) {
   }
   box.replaceChildren(tabStrip([["portfolio", words.portfolio], ["chains", words.chains], ["archive", words.archive]], dash.q1,
     (key) => { dash.q1 = key; renderDashboard(); }), dashNode("div", "dash-body"));
+  // The tracked wallets' sum and its day's change, at the top of the panel.
+  if (dashSum && dash.q1 !== "archive") {
+    const sum = dashNode("div", "dash-sum");
+    sum.append(dashNode("small", "muted", words.total), " ", dashNode("b", "", price(dashSum.total)), " ", signedUsd(dashSum.day));
+    box.lastChild.append(sum);
+  }
   box.lastChild.append(content);
 }
 // Holdings at a moment: today's, with every loaded transfer after it undone.
@@ -562,12 +569,11 @@ function renderDashboard() {
     const assets = chosenAssets();
     const total = assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0);
     const day = byToken(assets).reduce((sum, row) => sum + (changeOver(row.usd, marketCoin(row.token)?.change24h) ?? 0), 0);
-    // The total stands next to the owner's name, as on the analytics sites.
-    const head = $("#profile-total") ?? root.querySelector(".dash-total");
-    // Until some wallet's balance is in, no sum (a "$0" that then jumps to the real one reads as a blink).
+    // The wallets' sum stands in the Portfolio panel, not beside the owner's name (it is what the tracked wallets
+    // hold, not the visitor's money). Until some wallet's balance is in, no sum (no "$0" that then jumps).
+    ($("#profile-total") ?? root.querySelector(".dash-total"))?.replaceChildren();
     const counted = ownAccounts().some((item) => holdingsOf(item.address));
-    if (counted || !ownAccounts().length) head.replaceChildren(dashNode("b", "", price(total)), " ", signedUsd(day));
-    else head.replaceChildren();
+    dashSum = counted || !ownAccounts().length ? { total, day } : null;
     const select = document.querySelector(".dash-network");
     const chains = [...new Set(ownAccounts().flatMap((item) => (holdingsOf(item.address)?.assets ?? []).map((asset) => asset.chain)))];
     select.replaceChildren(...[["all", words.allNetworks], ...chains.map((chain) => [chain, CHAINS[chain]?.name ?? chain])].map(([value, text]) => {

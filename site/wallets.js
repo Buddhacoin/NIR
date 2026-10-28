@@ -31,7 +31,6 @@ const t = () => words[language === "en" ? "en" : "ru"];
 // How many known wallets each organisation has (/market/chain/entities), asked for the rows shown.
 const entityCounts = new Map();
 let satoshi = null; // /market/chain/satoshi, for Satoshi Nakamoto's row
-const GENERIC_LABEL = /^(?:fund|funds|whale|whales|exchange|hot wallet|cold wallet|deployer|contract|bridge|multisig|unknown|token|wallet|miner|mev bot|bot|dex|cex|otc|market maker)$/i;
 const askCounts = new Set();
 async function loadCounts() {
   const wanted = [...askCounts].filter((name) => name.length >= 2 && !entityCounts.has(name)).slice(0, 60);
@@ -61,8 +60,8 @@ const sort = { key: null, dir: 0 };
 // The rows of the chosen list: the hand-picked wallets, or a group from the open labels.
 function rowsOf() {
   const lang = language === "en" ? "en" : "ru";
-  const featured = () => WHALES.map((item) => ({ address: item.address, name: item.name, kind: item.kind[lang], logo: null }));
-  const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+  const featured = () => WHALES.map((item) => ({ address: item.address, short: item.short, name: item.name, kind: item.kind[lang], logo: null }));
+  const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address, item.short), short: item.short,
     // Whales: how much went through and what the book knows of them; finds: marked as found by behaviour.
     kind: key === "whales" ? [t().moved(item.moved), categoryName(item.category), item.entity, item.guessed ? t().byBehaviour : null].filter(Boolean).join(" · ")
       : key === "found" ? [categoryName(item.category), item.entity, t().byBehaviour].filter(Boolean).join(" · ")
@@ -91,7 +90,7 @@ function render() {
   // Wallets the open labels know by that name, beyond the lists loaded so far (BlackRock, a fund's wallet…).
   if (needle && found.query === needle) {
     const have = new Set(shown.map((item) => item.address.toLowerCase()));
-    shown.push(...found.items.filter((item) => !have.has(item.address.toLowerCase())).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
+    shown.push(...found.items.filter((item) => !have.has(item.address.toLowerCase())).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address, item.short), short: item.short,
       kind: item.entity ?? (item.contract ? t().contract : t().wallet), logo: item.logo ?? null })));
   }
   const rows = sortBy(shown, sort, (item) => balances.get(item.address)?.total ?? null);
@@ -110,7 +109,7 @@ function render() {
     const mobile = node("small", "w-mobile-balance", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total));
     const label = node("span", "w-label");
     label.append(node("b", "", item.name), mobile);
-    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), label, node("span", "muted w-short", shortAddress(item.address)));
+    link.append(walletAvatar({ address: item.address, name: item.name, logo: item.logo }, "w-avatar ex-whale-logo"), label, node("span", "muted w-short", shortAddress(item.address, item.short)));
     who.append(link);
     const networks = node("td", "left");
     networks.append(...(balance?.chains ?? []).map((chain) => chainDot(chain)));
@@ -151,6 +150,10 @@ async function loadGroup(asked = group) {
     list.items.push(...answer.items);
     list.next = answer.next;
     list.done = !answer.next;
+  } else if ((list.failed = (list.failed ?? 0) + 1) <= 3) {
+    // A failed answer is asked again a little later, the list showing it is loading meanwhile.
+    list.loading = true;
+    setTimeout(() => { list.loading = false; void loadGroup(asked); }, 4000 * list.failed);
   }
   render();
 }
@@ -193,12 +196,15 @@ function pump() {
     // A wallet that takes over half a minute shows "—" instead of loading for ever.
     void fetch(`/market/chain/address/${encodeURIComponent(address)}`, { signal: AbortSignal.timeout(30_000) }).then((response) => (response.ok ? response.json() : null)).catch(() => null)
       .then((data) => {
-        balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
-          chains: [...new Set(data.assets.map((asset) => asset.chain))] } : null);
-        // A big wallet's first answer can lack the tokens the explorer has not counted yet (the wallet's
-        // page waits for them): asked again until whole, so the list shows the same sum as the page.
+        // A big wallet's first answer can lack the tokens the explorer has not counted yet, or a network that
+        // did not answer: it does not replace a whole sum already shown, and is asked again until whole, so the
+        // list shows the same sum as the page. A failed answer is asked again too.
+        const incomplete = !data || data.networks?.some((item) => item.partial || !item.ok);
+        const had = balances.get(address);
+        if (!incomplete || !had) balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
+          chains: [...new Set(data.assets.map((asset) => asset.chain))] } : had ?? null);
         const tries = retried.get(address) ?? 0;
-        if (data?.networks?.some((item) => item.partial) && tries < 4) {
+        if (incomplete && tries < 4) {
           retried.set(address, tries + 1);
           setTimeout(() => { queue.push(address); pump(); }, 15_000);
         }
@@ -240,7 +246,7 @@ $("#filter").addEventListener("input", (event) => {
   findTimer = setTimeout(async () => {
     const answer = await fetch(`/market/chain/search?q=${encodeURIComponent(needle)}`).then((response) => (response.ok ? response.json() : null)).catch(() => null);
     if (needle !== query.toLowerCase()) return;
-    Object.assign(found, { query: needle, items: (answer?.results ?? []).filter((item) => /^0x[0-9a-fA-F]{40}$/.test(item.address)) });
+    Object.assign(found, { query: needle, items: (answer?.results ?? []).filter((item) => /^(?:0x[0-9a-fA-F]{40}|w:[a-z0-9-]{2,40})$/.test(item.address)) });
     render();
   }, 300);
 });

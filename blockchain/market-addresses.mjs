@@ -66,10 +66,11 @@ export function createAddresses({ db, now }) {
     }
     const match = /^\/market\/me\/addresses\/([^/]+)$/.exec(path);
     if (!match || (method !== "PUT" && method !== "DELETE")) return false;
-    // An organisation followed as one wallet ("entity:Binance"): its addresses stay on the server.
+    // An organisation followed as one wallet ("entity:Binance") or a known wallet under its id ("w:binance"):
+    // their addresses stay on the server.
     let raw = match[1];
     try { raw = decodeURIComponent(match[1]); } catch {}
-    const entity = /^entity:[^\u0000-\u001f]{2,60}$/.test(raw);
+    const entity = /^entity:[^\u0000-\u001f]{2,60}$/.test(raw) || /^w:[a-z0-9-]{2,40}$/.test(raw);
     if (!entity && !addressKind(match[1])) return json(response, 400, { error: "not an address" }), true;
     const address = entity ? raw.replace(/\s+/g, " ").trim() : canonical(match[1]);
     if (method === "DELETE") {

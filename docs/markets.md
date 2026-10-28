@@ -51,7 +51,9 @@ CoinGecko for prices and TradingView for charts.
 
 ## Wallets the site finds itself
 
-- `/wallets/` has two lists that grow on their own: **Whales** — the wallets the most money went through in 30 days in NIR Markets' own store of transfers (`ledger.busiest`), with the book's name when it has one (token contracts, routers, pools and bridges left out); **Found** — the newest names found from wallets' behaviour (`names.found`), marked as such (`GET /market/chain/popular?group=whales|found`).
+- `/wallets/` has two lists that grow on their own: **Whales** — the wallets the most money went through in 30 days in NIR Markets' own store of transfers (`ledger.busiest`), with the book's name when it has one (token contracts, routers, pools and bridges left out); **Found** — the newest names found from wallets' behaviour (`names.found`), marked as such (`GET /market/chain/popular?group=whales|found`). The whales are counted in a thread of their own (`market-ledger-busiest.mjs`) at most every ten minutes; asked between, the last count answers at once.
+- **Known wallets keep their addresses on the server** (`blockchain/market-masks.mjs`): a wallet with a name goes out under an id, `w:<id>` — the hand-picked ones readable (`data/featured-wallets.json`, `w:vitalik-buterin`), the rest from a keyed hash kept in `masks.db` — with only the first half of its address (`short`). Its page is `/w/<id>`; every `/market/chain/address/…` route and the tracked wallets take the id. A full address typed by a visitor opens as before.
+- **Sums that cannot be real are left out**: a token worth more than all of its coin, a look-alike under a large coin's ticker, or over a billion dollars of an unknown contract (the explorers price look-alikes at the real coin's price). A network that did not answer never replaces a whole cached sum; background work (the lists' sums, organisations' wallets) takes at most 60 % of the explorer budget, so a visitor's page has room; an organisation's wallets that failed are read again and the page says how many are in. Guesses from behaviour skip contracts (`eth_getCode` on the public nodes).
 - Behaviour no longer takes a wallet that only takes in for a hot wallet (it must pay out about as often, `ledger.sent`): the first block's address, which many send keepsakes to, was marked an exchange. Such an earlier guess is taken back on the next hourly run (`names.retract`).
 - The list's balances ask again while a big wallet's tokens are still being counted, so the list and the wallet's page show the same sum; Satoshi Nakamoto's row (all his early coins) leads to his organisation page.
 - A coin or token the lists have no picture for (a new listing, a tokenised share) gets one by its ticker from the server (`/market/logo/symbol/<TICKER>`: CoinGecko's search, the open icon sets, a share's logo), kept once found. A listing's "price now" is its price on the exchange that listed it.
@@ -66,7 +68,11 @@ Measured on a phone-sized browser recording, frame by frame (10 a second), movin
 - cross-page view transitions were dropped (the browser aborted them on most moves).
 A wallet's holdings and coin charts join the kept answers (a partial wallet answer is never kept). The wallet lists show the server's last whole sum of each wallet at once (`GET /market/chain/totals`, kept in `totals.json` and refreshed every quarter of an hour for the wallets lists ask about).
 
-In the day theme what is chosen or pressed is black with white letters, and the blue buttons are black. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
+What is chosen (tabs, switches, pressed pills) has one look across the site: the button colour with white letters — blue at night, black by day; a table's own tabs keep their quiet look. The browser tab's icon is the worn N on black, as on the home screen. A profile's tracked wallets' sum stands in its Portfolio panel ("Total"), not beside the owner's name, where it read as the visitor's own money. A profile shows its owner the email they signed in with (only to them: `/market/me` carries it, the public profile never does).
+
+## An organisation's bubbles
+
+`/visualizer/?address=entity:<name>` draws an organisation as one bubble in the middle with the wallets its members dealt with (`GET /market/chain/address/entity:<name>/links`, market-chain.mjs `entityLinks`): its members' transfers from the store, transfers between its own wallets left out, its addresses never given out; members not yet in the store are read in the background, a few at a time (Satoshi Nakamoto: his first block's address, where the keepsakes go). The organisation page has the bubbles, follow (a bell on phones) and share.
 
 ## Search engines
 

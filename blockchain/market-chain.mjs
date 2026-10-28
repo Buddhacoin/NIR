@@ -17,6 +17,7 @@
 // cached copy is served or the visitor is asked to retry.
 
 import { readFileSync, writeFileSync } from "node:fs";
+import { MASKED, short } from "./market-masks.mjs";
 import { createNames } from "./market-names.mjs";
 import { BACKUP, createNodes, NODES, postRpc } from "./market-rpc.mjs";
 
@@ -95,7 +96,7 @@ export function normalizeTransaction(chain, item, native) {
 }
 
 export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now, perMinute = 60, nativePrice = () => null, tokenWait = 20_000,
-  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null, patoshi = null,
+  labelFor = () => null, namesFile = ":memory:", names = createNames({ get, now, file: namesFile }), logos = null, opensea = null, ledger = null, patoshi = null, masks = null,
   crawlGap = 400, crawlPages = 400 } = {}) {
   const cache = new Map();
   const pending = new Map();
@@ -106,7 +107,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   // one request at a time, so a flood of new wallets must not queue up behind each other).
   let nodeUsed = [];
   const failedUntil = new Map(); // key → time before which a lookup that failed without a copy is not tried again
-  async function cached(key, ttl, load, { stale = false, nodes: onNodes = false } = {}) {
+  // `background`: work no visitor waits for (the lists' sums, organisations' wallets) takes at most 60 % of
+  // the budget, so a visitor's page always has room.
+  async function cached(key, ttl, load, { stale = false, nodes: onNodes = false, background = false } = {}) {
     const hit = cache.get(key);
     if (hit && now() - hit.at < ttl) return hit.value;
     if (!hit && (failedUntil.get(key) ?? 0) > now()) throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
@@ -118,7 +121,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     used = used.filter((at) => now() - at < 60_000);
     nodeUsed = nodeUsed.filter((at) => now() - at < 60_000);
     const spent = onNodes ? nodeUsed : used;
-    if (spent.length >= (onNodes ? 30 : perMinute)) {
+    if (spent.length >= (onNodes ? 30 : background ? Math.floor(perMinute * 0.6) : perMinute)) {
       if (hit) return hit.value;
       throw Object.assign(new Error("busy, try again in a minute"), { status: 503 });
     }
@@ -257,12 +260,26 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   }
   // A wallet seen before opens at once from its copy while a fresh one is read behind it.
   // A copy where a network did not answer is kept half a minute only, so the next visit asks again.
-  async function holdings(address) {
+  async function holdings(address, { background = false } = {}) {
     const key = `holdings:${address.toLowerCase()}`;
-    const value = await cached(key, 600_000, () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true });
+    const value = await cached(key, 600_000, () => (addressKind(address) === "evm" ? evmHoldings(address) : utxoHoldings(address)), { stale: true, background });
     const hit = cache.get(key);
     if (hit && value?.networks?.some((item) => !item.ok)) hit.at = Math.min(hit.at, now() - 600_000 + 30_000);
-    return reprice(value);
+    return sane(reprice(value), await nodes.coinIds().catch(() => null));
+  }
+  // A token whose dollar value cannot be real is left out: more than all of the coin is worth, a
+  // contract no coin list knows under a large coin's ticker (a look-alike), or over a billion dollars of an
+  // unknown contract. The explorers price such look-alikes at the real coin's price.
+  function sane(value, ids) {
+    if (!value?.assets || !ids?.contract) return value;
+    const wrong = (asset) => {
+      if (!asset.token?.address || !(asset.usd > 0)) return false;
+      const coinId = ids.contract.get(asset.token.address.toLowerCase());
+      if (coinId) return ids.cap?.has(coinId) && asset.usd > ids.cap.get(coinId);
+      return asset.usd > 1e9 || (asset.usd > 1e6 && ids.symbol?.has(String(asset.token.symbol ?? "").toUpperCase()));
+    };
+    if (!value.assets.some(wrong)) return value;
+    return { ...value, assets: value.assets.filter((asset) => !wrong(asset)) };
   }
   // The UTXO network's coin is valued at today's price when answered, not when its copy was read:
   // a copy made before the prices were in would show a balance of nothing for ten minutes.
@@ -437,7 +454,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const address = job.members[next++];
         if (job.holdings.has(address)) continue;
         for (let attempt = 0; attempt < 3; attempt += 1) {
-          try { job.holdings.set(address, await holdings(address)); break; } catch { await pause(10_000); }
+          try { job.holdings.set(address, await holdings(address, { background: true })); break; } catch { await pause(10_000); }
         }
         if (!job.holdings.has(address)) job.holdings.set(address, null);
         await pause(1_000);
@@ -445,6 +462,15 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     };
     await Promise.all([worker(), worker()]).catch(() => {});
     job.running = false;
+    // Wallets that did not answer are tried again a little later (twice at most), not counted as read.
+    const failed = [...job.holdings].filter(([, value]) => value === null).map(([address]) => address);
+    job.failed = failed.length;
+    if (failed.length && (job.retries ?? 0) < 2) {
+      job.retries = (job.retries ?? 0) + 1;
+      await pause(60_000);
+      for (const address of failed) job.holdings.delete(address);
+      if (!job.running) void fillEntity(job);
+    }
   }
   // The organisation's recent transfers from the store: its own side carries its name, not an address.
   function entityTransfers(name, members, limit = 60) {
@@ -457,6 +483,34 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       .map((row) => ({ id: row.id, chain: row.chain, time: row.time, amount: row.amount, usd: row.usd,
         token: { address: null, symbol: row.symbol ?? "", name: row.symbol ?? "", icon: null, price: null },
         from: own.has(row.from) ? self : named({ address: row.from }), to: own.has(row.to) ? self : named({ address: row.to }) }));
+  }
+  // An organisation's links for the bubbles (/visualizer/?address=entity:<name>): its members' transfers from the
+  // store, with the organisation as one bubble in the middle (its addresses are not given out), transfers between
+  // its own wallets left out. Members without stored transfers are read in the background, a few at a time.
+  function entityLinks(name) {
+    const satoshi = /^satoshi nakamoto$/i.test(name) && patoshi;
+    const members = satoshi ? ["1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"] : entityJob(name, []).members.slice(0, 80);
+    const own = new Set(members.map((address) => address.toLowerCase()));
+    let started = 0;
+    for (const address of members) if (!ledger.rows(address, 1).length && !crawlActive.has(address.toLowerCase()) && started++ < 6) void crawl(address);
+    const index = new Map();
+    const parties = [];
+    const rows = [];
+    const seen = new Set();
+    for (const address of members) {
+      for (const row of ledger.rows(address, 3_000)) {
+        if (seen.has(row.id) || own.has(row.from) === own.has(row.to)) continue;
+        seen.add(row.id);
+        const incoming = own.has(row.to);
+        const other = incoming ? row.from : row.to;
+        if (!index.has(other)) { index.set(other, parties.length); parties.push(other); }
+        rows.push([row.time, row.chain, index.get(other), incoming ? 1 : 0, row.usd === null ? null : Math.round(row.usd * 100) / 100]);
+      }
+    }
+    return { crawling: members.some((address) => crawlActive.has(address.toLowerCase())), parties: parties.map((other) => {
+      const party = named({ address: other });
+      return { address: other, name: party.name ?? null, logo: party.logo ?? null };
+    }), rows: rows.sort((left, right) => right[0] - left[0]).slice(0, 15_000) };
   }
   function entitySummary(name, extra = []) {
     const category = names.entityCategory(name);
@@ -482,7 +536,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }
     const list = [...assets.values()].sort((left, right) => right.usd - left.usd);
     const logo = names.members(name, 300).find((item) => item.logo)?.logo ?? null;
-    return { name, category, logo, count: job.members.length, loaded: job.holdings.size, done: !job.running && job.holdings.size >= job.members.length,
+    const read = [...job.holdings.values()].filter(Boolean).length;
+    return { name, category, logo, count: job.members.length, loaded: read, failed: job.failed ?? 0,
+      done: !job.running && job.holdings.size >= job.members.length && (!job.failed || (job.retries ?? 0) >= 2),
       sample: masked(job.members[0]), total: list.reduce((sum, asset) => sum + asset.usd, 0), assets: list.slice(0, 100),
       transfers: entityTransfers(name, job.members) };
   }
@@ -583,7 +639,28 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     }) };
   }
   // The feed is refreshed in the background, so a visitor never waits for the explorers.
+  // The whales list is counted off the main thread at most every ten minutes; asked between, the last
+  // count answers at once (the first visitor after a start waits for the first count).
+  let whaleRows = null;
+  let whalesAt = 0;
+  let whalesCounting = null;
+  function whales() {
+    if (!ledger) return Promise.resolve([]);
+    if (!whalesCounting && now() - whalesAt > 600_000) {
+      whalesCounting = (ledger.busiestLater ?? (async (since, limit) => ledger.busiest(since, limit)))(now() - 30 * 86_400_000, 300)
+        .then((rows) => {
+          whaleRows = rows;
+          whalesAt = now();
+          // Wallets without a name of their own are checked for code, one at a time: a contract leaves the list.
+          void (async () => { for (const row of rows) { const known = names.name(row.address); if (!known?.name || known.guessed) await hasCode(row.address); } })().catch(() => {});
+        }, () => {})
+        .finally(() => { whalesCounting = null; });
+    }
+    return whaleRows ? Promise.resolve(whaleRows) : (whalesCounting ?? Promise.resolve()).then(() => whaleRows ?? []);
+  }
+
   function warm(every = 15_000) {
+    void whales();
     const tick = () => { void feed().catch(() => {}); };
     tick();
     const timer = setInterval(tick, every);
@@ -599,7 +676,9 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
     const withOpen = open ? { ...party, name: party.name ?? open.name, logo: open.logo, ...(open.entity ? { entity: open.entity } : {}),
       ...(open.category ? { category: open.category, ...(open.guessed ? { guessed: true } : {}) } : {}) } : party;
     const name = labelFor(party.address);
-    return name ? { ...withOpen, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : withOpen;
+    const result = name ? { ...withOpen, name, tags: ["NIR Markets", ...(party.tags ?? []).filter((tag) => tag !== "NIR Markets")] } : withOpen;
+    // A wallet with a name goes out under its id, never its address (market-masks.mjs).
+    return masks ? masks.mask(result) : result;
   };
   const relabel = (items) => items.map((item) => ({ ...item, from: named(item.from), to: named(item.to) }));
   // The open labels of every address in the list: waited for up to `wait` milliseconds, then the
@@ -611,11 +690,16 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   };
   const learnNames = (items, wait) => Promise.race([names.lookup(items.flatMap((item) => [item.from?.address, item.to?.address])),
     new Promise((resolve) => { setTimeout(resolve, wait).unref?.(); })]);
-  const reply = (response, status, body, maxAge = 15) => {
+  // `hide`: a known wallet asked for by its id — its address is replaced by the id wherever the answer has it.
+  const reply = (response, status, body, maxAge = 15, hide = null) => {
     response.writeHead(status, { "content-type": "application/json; charset=utf-8",
       "cache-control": status === 200 ? `public, max-age=${maxAge}` : "no-store" });
-    response.end(JSON.stringify(body));
+    let text = JSON.stringify(body);
+    if (hide) text = text.replace(new RegExp(hide.address.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), hide.id);
+    response.end(text);
   };
+  // An address as asked: a full one, or a known wallet's id ("w:…") resolved on the server.
+  const resolveAsked = (value) => (MASKED.test(value ?? "") ? masks?.addressOf(value) ?? null : value);
   // Answers GET /market/chain/..., or returns false.
   async function handle(request, response, url) {
     const path = url.pathname;
@@ -636,26 +720,29 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       // own store of transfers), with their names when known; ?group=found: names found from behaviour, newest first.
       if (path === "/market/chain/popular" && ["whales", "found"].includes(url.searchParams.get("group"))) {
         const ids = await nodes.coinIds().catch(() => null);
-        const notWallet = (address, name) => ids?.contract?.has(String(address).toLowerCase()) || /^0x0{40}$/i.test(address)
+        const notWallet = (address, name) => ids?.contract?.has(String(address).toLowerCase()) || /^0x0{40}$/i.test(address) || knownContract(address)
           || /router|pool|bridge|swap|vault|aggregator|wrapped|token/i.test(name ?? "");
         const items = url.searchParams.get("group") === "found"
           ? names.found(200).map((row) => ({ address: row.address, name: row.name, entity: row.entity, category: row.category, found: row.at, guessed: true }))
-          : (ledger?.busiest(now() - 30 * 86_400_000, 300) ?? []).map((row) => {
+          : (await whales()).map((row) => {
             const known = names.name(row.address);
             return { address: row.address, name: known?.name ?? null, entity: known?.entity ?? null, logo: known?.logo ?? null, category: known?.category ?? null,
               guessed: Boolean(known?.guessed), moved: row.usd, transfers: row.transfers };
           });
-        return reply(response, 200, { items: items.filter((item) => !notWallet(item.address, item.name)).slice(0, 150), next: null }, 600), true;
+        return reply(response, 200, { items: items.filter((item) => !notWallet(item.address, item.name)).slice(0, 150).map((item) => (masks ? masks.mask(item) : item)), next: null }, 600), true;
       }
       // GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=…: a page of known wallets.
       if (path === "/market/chain/popular") {
         const cursor = url.searchParams.get("cursor");
-        const page = await names.directory(url.searchParams.get("group") ?? "", cursor && /^0x[0-9a-fA-F]{40}$/.test(cursor) ? cursor : null);
+        // The page's cursor is a wallet too: it travels as its id.
+        const from = resolveAsked(cursor);
+        const page = await names.directory(url.searchParams.get("group") ?? "", from && /^0x[0-9a-fA-F]{40}$/.test(from) ? from : null);
         if (!page) return reply(response, 404, { error: "unknown group" }), true;
         // A token's own contract is no wallet (a fund's token carries the fund's name): those are left out.
         const ids = await nodes.coinIds().catch(() => null);
         if (ids?.contract) page.items = page.items.filter((item) => !ids.contract.has(String(item.address).toLowerCase()));
-        return reply(response, 200, page, 3600), true;
+        return reply(response, 200, { ...page, items: page.items.map((item) => (masks ? masks.mask(item) : item)),
+          next: page.next && masks ? `w:${masks.idOf(page.next)}` : page.next }, 3600), true;
       }
       // GET /market/chain/entity?name=…&extra=…: an organisation as one wallet (entitySummary: its holdings added up, its transfers, how many addresses);
       // GET /market/chain/entities?names=a,b,… (60 at most): how many each has.
@@ -668,12 +755,12 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const name = (url.searchParams.get("name") ?? "").trim().slice(0, 60);
         if (name.length < 2) return reply(response, 400, { error: "a name, please" }), true;
         // The popular list's public wallets of the organisation, which the page knows already, may join in.
-        const extra = (url.searchParams.get("extra") ?? "").split(",").filter((address) => addressKind(address)).slice(0, 30);
+        const extra = (url.searchParams.get("extra") ?? "").split(",").map((value) => resolveAsked(value)).filter((address) => addressKind(address)).slice(0, 30);
         return reply(response, 200, entitySummary(name, extra), 5), true;
       }
       if (path === "/market/chain/entities") {
         const wanted = (url.searchParams.get("names") ?? "").split(",").map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 60).slice(0, 60);
-        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 80).length])) }, 600), true;
+        return reply(response, 200, { counts: Object.fromEntries(wanted.map((item) => [item, names.members(item, 300).length])) }, 600), true;
       }
       // GET /market/chain/names?addresses=a,b,… (50 at most): the open labels of those wallets.
       if (path === "/market/chain/names") {
@@ -683,22 +770,37 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         return reply(response, 200, { names: found }, 3600), true;
       }
       if (path === "/market/chain/search") {
-        const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }));
+        const results = (await search(url.searchParams.get("q") ?? "")).map((item) => ({ ...item, name: labelFor(item.address) ?? item.name }))
+          .map((item) => (masks ? masks.mask(item) : item));
         return reply(response, 200, { results }, 300), true;
       }
       // GET /market/chain/totals?addresses=a,b,…: each wallet's last whole balance the server knows (at once,
       // no fetching); the ones asked are kept fresh in the background, so lists show their sums straight away.
       if (path === "/market/chain/totals") {
-        const asked = [...new Set((url.searchParams.get("addresses") ?? "").split(",").filter((address) => addressKind(address)))].slice(0, 200);
-        for (const address of asked) followTotal(address);
-        return reply(response, 200, { totals: Object.fromEntries(asked.map((address) => [address, totals.get(address) ?? null])) }, 30), true;
+        // Known wallets are asked by their ids and answered under them.
+        const asked = [...new Set((url.searchParams.get("addresses") ?? "").split(","))].map((value) => [value, resolveAsked(value)])
+          .filter(([, address]) => addressKind(address)).slice(0, 200)
+          // One wallet is one sum, whatever the letters' case of its address.
+          .map(([value, address]) => [value, addressKind(address) === "evm" ? address.toLowerCase() : address]);
+        for (const [, address] of asked) followTotal(address);
+        return reply(response, 200, { totals: Object.fromEntries(asked.map(([value, address]) => [value, totals.get(address) ?? null])) }, 30), true;
       }
+      // GET /market/chain/address/entity:<name>/links: an organisation's links for the bubbles (entityLinks).
+      let plainPath = path;
+      try { plainPath = decodeURIComponent(path); } catch {}
+      const entityMatch = ledger && /^\/market\/chain\/address\/entity:([^/]{2,60})\/links$/.exec(plainPath);
+      if (entityMatch) return reply(response, 200, entityLinks(entityMatch[1].trim()), 10), true;
       const match = /^\/market\/chain\/address\/([^/]+)(?:\/(transfers|history|links))?$/.exec(path);
-      if (!match || !addressKind(match[1])) return reply(response, 404, { error: "not an address" }), true;
-      const [, address, part] = match;
+      let asked = match?.[1] ?? "";
+      try { asked = decodeURIComponent(asked); } catch {}
+      const address = resolveAsked(asked);
+      if (!match || !address || !addressKind(address)) return reply(response, 404, { error: "not an address" }), true;
+      const part = match[2];
+      const hide = MASKED.test(asked) ? { address, id: asked } : null;
+      const answer = (status, body, maxAge) => reply(response, status, body, maxAge, hide);
       if (!part) {
         const [data] = await Promise.all([holdings(address).then(withCoinIds), learn([{ from: { address } }], 2_000)]);
-        noteTotal(address, data);
+        noteTotal(addressKind(address) === "evm" ? address.toLowerCase() : address, data);
         const own = labelFor(address);
         let open = names.name(address);
         // A wallet no label names may have an OpenSea profile: its username, picture and linked X account.
@@ -712,19 +814,20 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const labelled = open ? { ...data, name: data.name ?? open.name, logo: open.logo, site: open.site,
           category: open.category ?? null, ...(open.guessed ? { guessed: true } : {}) } : data;
         // A short browser cache: the server keeps its own copy, and a newly approved name shows at once.
-        return reply(response, 200, own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled, 5), true;
+        const whole = own ? { ...labelled, name: own, tags: ["NIR Markets", ...data.tags] } : labelled;
+        return answer(200, hide ? { ...whole, short: short(address) } : whole, 5), true;
       }
       // GET …/links: the wallet's transfers from NIR Markets' own store, for the bubbles.
       if (part === "links") {
         if (!ledger) return reply(response, 404, { error: "no transfer store" }), true;
-        return reply(response, 200, await links(address), 5), true;
+        return answer(200, await links(address), 5), true;
       }
       const chain = addressKind(address) === "utxo" ? UTXO.id : url.searchParams.get("chain") ?? "eth";
       if (chain !== UTXO.id && !Object.hasOwn(EXPLORERS, chain) && !Object.hasOwn(NODES, chain)) return reply(response, 404, { error: "unknown network" }), true;
       if (part === "history") {
         // Balance history needs an explorer; the node networks have none.
-        if (!EXPLORERS[chain]) return reply(response, 200, { chain, points: [] }, 600), true;
-        return reply(response, 200, { chain, symbol: EXPLORERS[chain].native, points: await history(address, chain) }, 600), true;
+        if (!EXPLORERS[chain]) return answer(200, { chain, points: [] }, 600), true;
+        return answer(200, { chain, symbol: EXPLORERS[chain].native, points: await history(address, chain) }, 600), true;
       }
       const direction = ["in", "out"].includes(url.searchParams.get("dir")) ? url.searchParams.get("dir") : "all";
       let cursor = null;
@@ -732,7 +835,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
       if (cursor !== null && (typeof cursor !== "object" || JSON.stringify(cursor).length > 600)) cursor = null;
       const page = await transfers(address, chain, direction, cursor);
       await learn(page.items, 2_000);
-      return reply(response, 200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null,
+      return answer(200, { chain, items: relabel(page.items), next: page.next ? Buffer.from(JSON.stringify(page.next)).toString("base64url") : null,
         ...(page.reached ? { reached: page.reached } : {}) }, 30), true;
     } catch (error) {
       return reply(response, error?.status === 503 ? 503 : 502, { error: "the explorer is unavailable, try again in a minute" }), true;
@@ -747,8 +850,8 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   try { if (totalsFile) for (const [address, value] of Object.entries(JSON.parse(readFileSync(totalsFile, "utf8")))) totals.set(address, value); } catch {}
   function noteTotal(address, data) {
     if (!data?.assets) return;
-    // A partial answer (tokens not counted yet) does not replace a whole one.
-    const partial = (data.networks ?? []).some((item) => item.partial);
+    // A partial answer (tokens not counted yet, or a network that did not answer) does not replace a whole one.
+    const partial = (data.networks ?? []).some((item) => item.partial || !item.ok);
     if (partial && totals.has(address)) return;
     totals.set(address, { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0), chains: [...new Set(data.assets.map((asset) => asset.chain))], at: now(), partial });
   }
@@ -765,7 +868,7 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         .filter((address) => now() - (totals.get(address)?.at ?? 0) > 15 * 60_000 || totals.get(address)?.partial)
         .sort((left, right) => (totals.get(left)?.at ?? 0) - (totals.get(right)?.at ?? 0));
       for (let index = 0; index < due.length; index += 2) {
-        await Promise.all(due.slice(index, index + 2).map((address) => holdings(address).then((data) => noteTotal(address, data)).catch(() => null)));
+        await Promise.all(due.slice(index, index + 2).map((address) => holdings(address, { background: true }).then((data) => noteTotal(address, data)).catch(() => null)));
       }
       if (totalsFile) { try { writeFileSync(totalsFile, JSON.stringify(Object.fromEntries(totals))); } catch {} }
     })().finally(() => { refreshing = null; });
@@ -774,5 +877,23 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
   const totalsTimer = setInterval(() => { void refreshTotals(); }, 5 * 60_000);
   totalsTimer.unref?.();
 
-  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
+  // Whether an address is a contract on any of the networks with a public node (code there): a contract
+  // is no one's wallet, so guesses from behaviour leave it out. Kept for the service's life.
+  const codeOf = new Map(); // lower-case address → true | false
+  async function hasCode(address) {
+    const key = String(address ?? "").toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(key)) return false;
+    if (codeOf.has(key)) return codeOf.get(key);
+    const answers = await Promise.all([...Object.values(NODES), BACKUP.eth].filter((node) => node?.rpc)
+      .map((node) => rpc(node.rpc, "eth_getCode", [key, "latest"]).then((code) => (typeof code === "string" ? code.length > 2 : null), () => null)));
+    // Not one node answered: unknown, asked again next time.
+    if (answers.every((answer) => answer === null)) return false;
+    const found = answers.some(Boolean);
+    if (codeOf.size > 50_000) codeOf.delete(codeOf.keys().next().value);
+    codeOf.set(key, found);
+    return found;
+  }
+  const knownContract = (address) => codeOf.get(String(address ?? "").toLowerCase()) === true;
+
+  return { handle, feed, holdings, transfers, history, search, warm, names, links, crawl, hasCode, coinOfSymbol: nodes.coinOfSymbol, platformsOf: nodes.platformsOf, patoshi, platform: nodes.platform, networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES), UTXO.id] };
 }

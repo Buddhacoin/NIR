@@ -10,15 +10,15 @@
   <meta property="og:title" content="Организация — NIR Markets">
   <meta property="og:description" content="Все известные кошельки организации на NIR Markets: общий баланс, активы и каждый адрес по отдельности.">
   <meta property="og:image" content="https://nircoin.com/icon-512.png">
-  <link rel="icon" href="/favicon.ico?v=3" sizes="48x48">
-  <link rel="icon" href="/favicon-32.png?v=3" type="image/png" sizes="32x32">
-  <link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico?v=4" sizes="48x48">
+  <link rel="icon" href="/favicon-32.png?v=4" type="image/png" sizes="32x32">
+  <link rel="icon" href="/favicon.svg?v=4" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=3">
   <link rel="manifest" href="/manifest.webmanifest?v=3">
   <meta name="apple-mobile-web-app-title" content="NIR Markets">
   <meta name="theme-color" content="#000000">
   <script>try{const t=localStorage.getItem("nir-site-theme");if(t)document.documentElement.dataset.theme=t;}catch{}</script>
-  <link rel="stylesheet" href="/markets.css?v=90">
+  <link rel="stylesheet" href="/markets.css?v=93">
 </head>
 <body>
   <div class="nirbar">
@@ -61,7 +61,9 @@
         <div class="ex-total"><b id="total">—</b></div>
       </div>
       <div class="ex-actions">
-        <button class="act" id="follow" type="button"></button>
+        <a class="act viz-act" id="visualize" href="/visualizer/" data-i18n="visualize">Пузыри связей</a>
+        <button class="act ghost" id="follow" type="button"></button>
+        <button class="act ghost" id="share" type="button" data-i18n="share">Поделиться</button>
       </div>
     </section>
     <p class="note-bar ok" id="followed" hidden></p>
@@ -94,7 +96,7 @@
     <a href="/nir/#start"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.6 12.8C4.8 9.4 7.4 6.6 10.4 5.2M20.4 12.8C19.2 9.4 16.6 6.6 13.6 5.2M7 9l11 11M17 9 6 20"/></svg><span data-i18n="barMine">Майнинг</span></a>
     <a href="/screener/" id="tab-account"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg><span data-i18n="navScreener">Скринеры</span></a>
   </nav>
-  <script src="/common.js?v=45"></script>
-  <script src="/entity.js?v=7"></script>
+  <script src="/common.js?v=47"></script>
+  <script src="/entity.js?v=11"></script>
 </body>
 </html>

@@ -10,7 +10,7 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   portfolio: "Portfolio", transfers: "Transfers", colAsset: "Asset", colAmount: "Amount", colValue: "Value", colTime: "Time", colFrom: "From", colTo: "To", colUsd: "USD",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
-  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
+  howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →", share: "Share", visualize: "Wallet links",
 };
 const words = {
   ru: { addresses: (count) => (count >= 1000 ? `${(count / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} тыс. адресов` : `${count} ${plural(count, "адрес", "адреса", "адресов")}`),
@@ -51,8 +51,9 @@ function render() {
   const shield = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 6v6c0 5 3.4 8.5 8 10 4.6-1.5 8-5 8-10V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>';
   $("#count").hidden = !summary?.count;
   if (summary?.count) { $("#count").innerHTML = shield; $("#count").append(node("span", "", t().addresses(summary.count))); }
-  $("#category").hidden = !categoryName(summary?.category);
-  $("#category").textContent = categoryName(summary?.category) ?? "";
+  const category = summary ? fixedCategory(entity) ?? summary.category : null;
+  $("#category").hidden = !categoryName(category);
+  $("#category").textContent = categoryName(category) ?? "";
   // The addresses stay on the server: one shows half hidden.
   $("#hidden").hidden = !summary?.sample;
   if (summary?.sample) {
@@ -60,7 +61,8 @@ function render() {
     $("#hidden").append(node("span", "", t().hidden(summary.sample, Math.max(0, summary.count - 1))));
   }
   $("#total").textContent = summary?.total ? price(summary.total) : "—";
-  if (summary && !summary.done && summary.count) $("#total").append(node("small", "muted", ` · ${t().loaded(summary.loaded, summary.count)}`));
+  // Until every wallet is read, and for good when some never answered, the page says how many are in.
+  if (summary && (!summary.done || summary.failed) && summary.count) $("#total").append(node("small", "muted", ` · ${t().loaded(summary.loaded, summary.count)}`));
   $("#note").textContent = satoshi ? t().satoshiNote(satoshi.keys, satoshi.checked, satoshi.moved) : summary?.count ? t().note : summary ? t().none : "";
   if (satoshi) {
     // The picture's licence asks for its author.
@@ -148,6 +150,16 @@ async function loadSaved() {
 }
 
 $("#follow").addEventListener("click", () => void follow());
+// The organisation's bubbles: its links as one wallet (the visualizer takes entity:<name>).
+$("#visualize").href = `/visualizer/?address=${encodeURIComponent(key)}`;
+// The organisation's page shared as a link (the phone's share sheet, else copied).
+$("#share").addEventListener("click", async () => {
+  if (navigator.share) { await navigator.share({ title: document.title, url: location.href }).catch(() => {}); return; }
+  await navigator.clipboard?.writeText(location.href).catch(() => {});
+  const label = $("#share").textContent;
+  $("#share").textContent = language === "en" ? "Link copied" : "Ссылка скопирована";
+  setTimeout(() => { $("#share").textContent = label; }, 1500);
+});
 $("#find").addEventListener("click", () => {
   document.body.classList.toggle("searching");
   if (document.body.classList.contains("searching")) $("#search").focus();

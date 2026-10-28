@@ -221,9 +221,13 @@ const CHAINS = {
   bsc: { name: "BNB Chain", short: "BNB", color: "#f0b90b", tx: "https://bscscan.com/tx/", node: true, logo: `${LOGOS}825/small/bnb-icon2_2x.png` },
   btc: { name: "Bitcoin", short: "BTC", color: "#f7931a", tx: "https://mempool.space/tx/", logo: `${LOGOS}1/small/bitcoin.png` },
 };
-const ADDRESS = /^(?:0x[0-9a-fA-F]{40}|bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34})$/;
-const addressUrl = (address) => `/address/${encodeURIComponent(address)}`;
-const shortAddress = (address) => (address && address.length > 14 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address ?? "—");
+// A known wallet goes by its id ("w:vitalik-buterin", market-masks.mjs): its address stays on the server and its
+// page is /w/<id>; only the first half of its address is shown.
+const MASKED_ID = /^w:[a-z0-9-]{2,40}$/;
+const ADDRESS = /^(?:0x[0-9a-fA-F]{40}|bc1[02-9ac-hj-np-z]{11,87}|[13][1-9A-HJ-NP-Za-km-z]{25,34}|w:[a-z0-9-]{2,40})$/;
+const addressUrl = (address) => (MASKED_ID.test(address ?? "") ? `/w/${address.slice(2)}` : `/address/${encodeURIComponent(address)}`);
+const shortAddress = (address, short) => (MASKED_ID.test(address ?? "") ? short ?? WHALE.get(address)?.short ?? "…"
+  : address && address.length > 14 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address ?? "—");
 // The network's logo (Base's blue square is drawn here), titled with its name; its initial if the logo fails.
 function chainDot(chain) {
   const info = CHAINS[chain] ?? { name: chain, short: chain, color: "#888" };
@@ -247,41 +251,49 @@ function chainDot(chain) {
 // owner's name, logo or site icon. Networks without open labels (the UTXO one) give the owner's site.
 const FAVICON = "https://www.google.com/s2/favicons?sz=64&domain=";
 const ENS_AVATAR = "https://metadata.ens.domains/mainnet/avatar/";
-// Each is the entity's own published or widely reported address.
+// Each is the entity's own published or widely reported address, kept on the server (data/featured-wallets.json).
 const WHALES = [
-  { address: "0xF977814e90dA44bFA03b6295A0616a897441aceC", name: "Binance", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo", name: "Binance: BTC", site: "binance.com", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6", name: "U.S. Government", site: "justice.gov", kind: { ru: "Государство", en: "Government" } },
-  { address: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa", name: "Satoshi Nakamoto", site: "bitcoin.org", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045", name: "Vitalik Buterin", ens: "vitalik.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe", name: "Ethereum Foundation", kind: { ru: "Фонд", en: "Foundation" } },
-  { address: "0xf584f8728b874a6a5c7a8d4d387c9aae9172d621", name: "Jump Trading", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0xDBF5E9c5206d0dB70a90108bf936DA60221dC080", name: "Wintermute", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
-  { address: "0x71660c4005BA85c37ccec55d0C4493E66Fe775d3", name: "Coinbase", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x28C6c06298d514Db089934071355E5743bf21d60", name: "Binance 14", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0", name: "Kraken", kind: { ru: "Биржа", en: "Exchange" } },
-  { address: "0x6cC5F688a315f3dC28A7781717a9A798a59fDA7b", name: "OKX", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:binance", short: "0xF977814e90dA44bFA03…", name: "Binance", site: "binance.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:binance-btc", short: "34xp4vRoCGJym3xR7…", name: "Binance: BTC", site: "binance.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:u-s-government", short: "bc1qa5wkgaew2dkv56kfv…", name: "U.S. Government", site: "justice.gov", kind: { ru: "Государство", en: "Government" } },
+  { address: "w:satoshi-nakamoto", short: "1A1zP1eP5QGefi2DM…", name: "Satoshi Nakamoto", site: "bitcoin.org", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:vitalik-buterin", short: "0xd8dA6BF26964aF9D7eE…", name: "Vitalik Buterin", ens: "vitalik.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:ethereum-foundation", short: "0xde0B295669a9FD93d5F…", name: "Ethereum Foundation", site: "ethereum.org", kind: { ru: "Фонд", en: "Foundation" } },
+  { address: "w:jump-trading", short: "0xf584f8728b874a6a5c7…", name: "Jump Trading", site: "jumptrading.com", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "w:wintermute", short: "0xDBF5E9c5206d0dB70a9…", name: "Wintermute", site: "wintermute.com", kind: { ru: "Маркет-мейкер", en: "Market maker" } },
+  { address: "w:coinbase", short: "0x71660c4005BA85c37cc…", name: "Coinbase", site: "coinbase.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:binance-14", short: "0x28C6c06298d514Db089…", name: "Binance 14", site: "binance.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:kraken", short: "0x267be1c1d684f78cb4f…", name: "Kraken", site: "kraken.com", kind: { ru: "Биржа", en: "Exchange" } },
+  { address: "w:okx", short: "0x6cC5F688a315f3dC28A…", name: "OKX", site: "okx.com", kind: { ru: "Биржа", en: "Exchange" } },
   // Well-known people by the name-service name they set on their own wallet (each resolves to this address).
-  { address: "0x8589cd7a7B9E0C3eA3552FacB8ff11B3135baAD7", name: "James Wynn", ens: "jwynn.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x020cA66C30beC2c4Fe3861a94E4DB4A498A35872", name: "Machi Big Brother", ens: "machibigbrother.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x648aA14e4424e0825A5cE739C8C68610e143FB79", name: "Anthony Sassano", ens: "sassal.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xfD22004806A6846EA67ad883356be810F0428793", name: "punk6529", ens: "punk6529.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xD387A6E4e84a6C86bd90C158C6028A58CC8Ac459", name: "Pranksy", ens: "pranksy.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x0109731B26B26b33De264DcE92c8C7Aa882Da613", name: "Gary Vaynerchuk", ens: "garyvee.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xb8c2C29ee19D8307cb7255e1Cd9CbDE883A267d5", name: "Nick Johnson", ens: "nick.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x2E21f5d32841cf8C7da805185A041400bF15f21A", name: "Stani Kulechov", ens: "stani.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x50EC05ADe8280758E2077fcBC08D878D4aef79C3", name: "Hayden Adams", ens: "hayden.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x42f9134E9d3Bf7eEE1f8A5Ac2a4328B059E7468c", name: "Kain Warwick", ens: "kain.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0xD64aA5F70F228dC486b70D83d9b948fae3Cc698c", name: "Dan Romero", ens: "dwr.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x0916C04994849c676ab2667Ce5bbDF7CcC94310a", name: "Balaji Srinivasan", ens: "balajis.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x849151d7D0bF1F34b70d5caD5149D28CC2308bf1", name: "Jesse Pollak", ens: "jessepollak.eth", kind: { ru: "Персона", en: "Individual" } },
-  { address: "0x983110309620D911731Ac0932219af06091b6744", name: "Brantly Millegan", ens: "brantly.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:james-wynn", short: "0x8589cd7a7B9E0C3eA35…", name: "James Wynn", ens: "jwynn.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:machi-big-brother", short: "0x020cA66C30beC2c4Fe3…", name: "Machi Big Brother", ens: "machibigbrother.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:anthony-sassano", short: "0x648aA14e4424e0825A5…", name: "Anthony Sassano", ens: "sassal.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:punk6529", short: "0xfD22004806A6846EA67…", name: "punk6529", ens: "punk6529.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:pranksy", short: "0xD387A6E4e84a6C86bd9…", name: "Pranksy", ens: "pranksy.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:gary-vaynerchuk", short: "0x0109731B26B26b33De2…", name: "Gary Vaynerchuk", ens: "garyvee.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:nick-johnson", short: "0xb8c2C29ee19D8307cb7…", name: "Nick Johnson", ens: "nick.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:stani-kulechov", short: "0x2E21f5d32841cf8C7da…", name: "Stani Kulechov", ens: "stani.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:hayden-adams", short: "0x50EC05ADe8280758E20…", name: "Hayden Adams", ens: "hayden.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:kain-warwick", short: "0x42f9134E9d3Bf7eEE1f…", name: "Kain Warwick", ens: "kain.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:balaji-srinivasan", short: "0x0916C04994849c676ab…", name: "Balaji Srinivasan", ens: "balajis.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:jesse-pollak", short: "0x849151d7D0bF1F34b70…", name: "Jesse Pollak", ens: "jessepollak.eth", kind: { ru: "Персона", en: "Individual" } },
+  { address: "w:brantly-millegan", short: "0x983110309620D911731…", name: "Brantly Millegan", ens: "brantly.eth", kind: { ru: "Персона", en: "Individual" } },
 ];
 const WHALE = new Map(WHALES.map((item) => [item.address.toLowerCase(), item]));
 const knownName = (address) => WHALE.get(String(address ?? "").toLowerCase())?.name ?? null;
 // An organisation's name from a wallet's label: "Binance 14" or "Binance: Hot Wallet" → "Binance".
-const entityName = (name) => String(name ?? "").split(/[:(]/)[0].replace(/\s+\d+$/, "").trim();
+// One organisation under two labels goes to one page ("Coinbase Exchange: Hot Wallet" → "Coinbase").
+const ENTITY_ALIASES = { "coinbase exchange": "Coinbase", "coinbase 10": "Coinbase", "okex": "OKX", "kraken exchange": "Kraken" };
+const entityName = (name) => { const plain = String(name ?? "").split(/[:(]/)[0].replace(/\s+\d+$/, "").trim(); return ENTITY_ALIASES[plain.toLowerCase()] ?? plain; };
+// The hand-picked organisations' kind, fixed: the labels' vote can tip the wrong way (a market maker's
+// wallet labelled as an exchange's).
+const ENTITY_CATEGORIES = { Binance: "exchange", Coinbase: "exchange", Kraken: "exchange", OKX: "exchange", "Jump Trading": "market-maker",
+  Wintermute: "market-maker", "Ethereum Foundation": "fund", "U.S. Government": "government" };
+const fixedCategory = (name) => (name ? ENTITY_CATEGORIES[entityName(name)] ?? null : null);
 const entityUrl = (name) => `/entity/?name=${encodeURIComponent(name)}`;
+// Labels that say what a wallet is, not whose: no organisation page for them.
+const GENERIC_LABEL = /^(?:fund|funds|whale|whales|exchange|hot wallet|cold wallet|deployer|contract|bridge|multisig|unknown|token|wallet|miner|mev bot|bot|dex|cex|otc|market maker|sybil delegate|delegate|proxy|safe|gnosis safe)$/i;
 // Open labels fetched by the page: lower-case address → { name, logo, site, entity }.
 const openNames = new Map();
 async function loadOpenNames(addresses) {
@@ -361,10 +373,13 @@ function walletLink(party, { bubbles = true } = {}) {
   // A picture only for a wallet with a name; a bare address gets a copy button instead.
   if (party.name || party.logo) link.append(walletAvatar(party));
   if (party.name) link.append(Object.assign(document.createElement("b"), { textContent: party.name }), " ");
-  link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${party.address.slice(0, 5)})` : shortAddress(party.address) }));
+  const masked = MASKED_ID.test(party.address);
+  const shown = party.short ?? WHALE.get(party.address)?.short ?? (masked ? "" : party.address);
+  if (masked) link.title = party.name ?? shown;
+  if (shown) link.append(Object.assign(document.createElement("span"), { className: party.name ? "muted" : "", textContent: party.name ? `(${shown.slice(0, 5)})` : masked ? shown : shortAddress(shown) }));
   const all = document.createDocumentFragment();
   all.append(link);
-  if (!party.name) all.append(copyButton(party.address));
+  if (!party.name && !masked) all.append(copyButton(party.address));
   if (bubbles && ADDRESS.test(party.address)) all.append(bubblesLink(party.address));
   return all;
 }

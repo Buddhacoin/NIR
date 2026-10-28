@@ -614,7 +614,7 @@ test("wallets' behaviour names deposit addresses and finds likely hot wallets, n
     ...Array.from({ length: 30 }, (_, index) => [send(wallet(400 + index), wallet(3)), send(wallet(400 + index), wallet(3))]).flat()]);
   names.infer([{ address: wallet(3), name: null, category: "exchange" }]); // an earlier guess, taken back
   const behaviour = createBehaviour({ ledger, names, now: () => 2_000 });
-  const result = behaviour.run();
+  const result = await behaviour.run();
   assert.ok(result.added >= 11);
   assert.deepEqual(names.name(wallet(100)), { name: "Olympus: Deposit", entity: "Olympus", site: null, logo: null, category: "exchange", guessed: true });
   assert.equal(names.name(wallet(200)), null, "one transfer is not enough");
@@ -625,6 +625,10 @@ test("wallets' behaviour names deposit addresses and finds likely hot wallets, n
   assert.equal(result.retracted, 1);
   assert.equal(names.history(wallet(100)).at(-1).source, "behaviour");
   assert.deepEqual(guessFromBehaviour([], () => null), []);
+  // A contract fed like a hot wallet (a pool, a proxy) is nobody's wallet: the guess is taken back.
+  const again = await createBehaviour({ ledger, names, now: () => 2_000, hasCode: async (address) => address === unknown }).run();
+  assert.equal(names.name(unknown), null);
+  assert.equal(again.retracted, 1);
 });
 
 test("an organisation is shown as one wallet: its holdings added up, its transfers under its name, its addresses kept back", async () => {
