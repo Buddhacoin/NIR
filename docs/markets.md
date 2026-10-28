@@ -29,6 +29,22 @@ visit. A source that fails keeps its last good data. A free CoinGecko demo key
 can be set as `COINGECKO_API_KEY` in `/etc/nir-market.env`. The page credits
 CoinGecko for prices and TradingView for charts.
 
+## Prices that match the market
+
+- A coin page's kept copy (CoinGecko busy, or read back from `cache.db`) takes the market list's price, changes, cap and volume when it is over a minute old, and a kept chart ends at the current price; the week stand-in chart ends at it too. "Updated" moves only when the prices were read. CoinGecko is asked for full precision (`precision=full`), so prices over $1 are not rounded to cents; the site shows four decimals under $10.
+- The trending card shows the list's row of each coin. Network coins' live trades say they trade as their wrapped token.
+- The trend screener's day change comes from the busiest market reporting a rolling 24 hours (MEXC counts from its midnight). Arbitrage buys at the ask and sells at the bid (Binance's ticker has neither: its last price). Exchange prices show as the exchange gives them (up to eight digits).
+- The order book shows each exchange's own pair (Coinbase and Kraken quote dollars) and BTC-quoted money in BTC; OKX futures candles count coins, not contracts. A dropped Binance stream starts its book again from the next snapshot (no cancelled far wall stays), and a failed OKX instruments read is asked again.
+- Coin logos come through the site's server (`/market/logo/coin/<id>/<size>/<file>`, market-logos.mjs), kept on disk, fetched ahead for the market list every ten minutes and sent for a month of browser cache; CoinGecko's own carry no caching headers, so phones fetched them on every page.
+
+## Figures in place, pages ready before the tap
+
+- A list that refreshes (the home table, its cards and small heatmap, the screeners) lays its new rows over the ones on screen (`patchList` in `site/common.js`): a row of the same coin is kept and only the text and colours that changed are rewritten, so the figures change in place and pictures are not loaded again.
+- Browsers with speculation rules (Chrome, Edge) fetch the bottom menu's pages ahead and prepare a linked page whole when the pointer or finger heads for it; pages fade into each other (`@view-transition`) instead of flashing blank.
+- The order book has a price step choice beside the market, as on the exchanges' books (the exchange's own prices, then 10, 50, 100… of its tick), and its columns say what they count: "Qty (ETH)", or "Value ($)" in dollar mode.
+- On a phone a wallet's head is laid out as on the analytics apps: the picture beside the name, the actions as icons on that row, the networks in one row that scrolls.
+- CoinGecko's global figures: a zero market cap or volume (it sometimes answers so) keeps the last good one.
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the
@@ -378,11 +394,11 @@ coloured by the change, stablecoins left out unless asked for.
 
 The order book screener (`/screener/book/`, `site/book.js`,
 `blockchain/market-book.mjs`): one pair on one of eight exchanges, spot or
-futures (Binance — its spot market from its market-data addresses, which serve the Netherlands —, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
+futures (Binance — its spot market turns the server's country, the Netherlands, away even on its market-data addresses, so when the server cannot read it the visitor's browser reads the book, trades and candles straight from `data-api.binance.vision`, which allows any site: 5,000 levels every ten seconds and the nearest 1,000 every two —, Bybit, OKX with their futures, Coinbase, Kraken, Bitstamp,
 Bitfinex, HitBTC), or several side by side in the constructor. `GET
 /market/book?ex=…&base=…&quote=…` reads the exchange's public book (no key) at
 most every two seconds whoever asks and sends the exchange's own price levels
-(each side's 800 largest within its whole reach, each with the volume from the
+(each side's 800 largest within its whole reach and its 200 nearest whatever their size, so the book starts at the price, each with the volume from the
 best price through it) and each side's totals out to every whole per cent. Depth: Coinbase, Bitstamp and HitBTC
 answer with their whole book; Bitfinex is read at three precisions (exact near
 the price, coarser further out); Binance (spot and futures) is kept in full
@@ -401,8 +417,8 @@ shows a big order's whole row lighter and bold, sums every order of each side
 within the depth, gives the volume from the price through a row on a pointer, filters the trades feed by
 the smallest trade, and draws the big orders on a candle chart as levels
 (green under the price, red above; hide, depth and reversed colours in the
-chart settings). Thresholds left empty follow the book (about forty levels
-shown, the eight biggest big); a dollar mode sets and shows them in dollars.
+chart settings). Thresholds left empty follow the book (the smallest order shown is the
+fortieth largest level within 1% of the price, about twenty a side near it as on the order-book tools; the eight biggest are big); a dollar mode sets and shows them in dollars.
 Settings stay in the browser. The chart is TradingView's Lightweight Charts
 (`site/vendor/lightweight-charts.js`, Apache 2.0, credited in the footer).
 

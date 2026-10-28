@@ -10,7 +10,7 @@ const en = {
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   title: "Trend screener", tabTrends: "Trends", tabDensities: "Order book walls", tabBook: "Order book", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap", colCoin: "Coin", colPrice: "Price", col1h: "1h", col4h: "4h", col24h: "24h", colRange: "24h range",
   colVolume: "24h volume", colOi: "Open interest", colOi1h: "OI 1h", colFunding: "Funding", colExchanges: "Exchanges",
-  source: "Data: the open futures markets of Bitget, OKX, Gate and MEXC, updated every minute. Changes over 5 minutes to 4 hours come from the server's own price snapshots, so after a restart they fill in gradually.",
+  source: "Data: the open futures markets of Binance, Bybit, Bitget, OKX, Gate and MEXC, updated every minute. Changes over 5 minutes to 4 hours come from the server's own price snapshots, so after a restart they fill in gradually.",
   barMarkets: "Markets", barMine: "Mining", tabWatch: "Watchlist", dataBy: "Data:", notAdvice: "Not financial advice",
   howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
@@ -26,7 +26,7 @@ const words = {
     filter: "Coin", loading: "Loading the markets…", empty: "Nothing found.", warming: (minutes) => `The server has collected ${minutes} min of prices; longer changes fill in later.`,
     updated: (time, count, list) => `Updated ${time} · ${count} coins · exchanges: ${list}` },
 };
-const EXCHANGE_NAMES = { bitget: "Bitget", okx: "OKX", gate: "Gate", mexc: "MEXC" };
+const EXCHANGE_NAMES = { binance: "Binance", bybit: "Bybit", bitget: "Bitget", okx: "OKX", gate: "Gate", mexc: "MEXC" };
 const t = () => words[language === "en" ? "en" : "ru"];
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const state = { frame: "ch1h", preset: "all", minVolume: 1e6, query: "" };
@@ -45,7 +45,8 @@ function changeCell(value, strong) {
 }
 function priceText(value) {
   if (value === null) return "—";
-  return `$${value.toLocaleString(locale(), value >= 1 ? { maximumFractionDigits: 2 } : { maximumSignificantDigits: 4 })}`;
+  // The exchange's own price as it gives it (up to eight digits), not rounded off its tick.
+  return `$${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })}`;
 }
 
 function chosen() {
@@ -85,8 +86,10 @@ function render() {
   $("#note").textContent = [minutes < 240 ? t().warming(minutes) : "", t().updated(new Date(data.updatedAt).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }),
     data.rows.length, data.exchanges.map((name) => EXCHANGE_NAMES[name] ?? name).join(", "))].filter(Boolean).join(" ");
   const rows = chosen().slice(0, 300);
-  $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#rows"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = row.symbol;
     // The server names the coin page and logo for the 1,000 largest coins; the market list fills in the rest.
     const coin = row.id ? { id: row.id, symbol: row.symbol, image: row.image ?? coins.get(row.symbol)?.image ?? null } : coins.get(row.symbol);
     if (coin) tr.addEventListener("click", () => { location.href = coinUrl(coin); });

@@ -1,5 +1,8 @@
 /* NIR Markets. Day: the white, blue-accented look of the big market sites.
    Night: near-black with neutral grey cards and a blue accent. Orange stays only in the NIR coin. */
+/* Moving between the site's pages: the next page fades in over this one instead of a blank flash. */
+@view-transition { navigation: auto; }
+
 :root {
   /* Night follows the on-chain analytics sites: near-black, neutral greys, white text, a blue accent. */
   --bg: #000000; --panel: #0e0e0f; --panel2: #141415; --line: #ffffff17; --text: #f2f2f2; --muted: #8e8e93;
@@ -1310,12 +1313,15 @@ html.touch { overscroll-behavior-y: contain; }
 }
 /* Nothing scrolls behind an open dialog or sheet. */
 body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidden; }
-/* Phones: the back button (common.js addBackButton); the logo keeps its picture only, to leave it room. */
+/* Phones: the back button (common.js addBackButton); the logo keeps its name, a little smaller, and the
+   buttons sit at the right edge. */
 .top .back { display: none; }
 @media (max-width: 700px) {
   .top .back { display: grid; place-items: center; flex: none; width: 40px; height: 40px; padding: 0; }
   .top .back svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
-  body.inner-page .top .brand { gap: 0; font-size: 0; }
+  body.inner-page .top .brand { gap: 6px; font-size: 20px; }
+  body.inner-page .top .brand img { width: 32px; height: 32px; }
+  .top .pill.find { margin-left: auto; }
   body.inner-page .top .brand small, body.inner-page .viz-head #back { display: none; }
 }
 /* The bubbles: a name under a bubble with a picture, and a light stage in the day theme. */
@@ -1476,6 +1482,8 @@ body:has(dialog[open]), body:has(.pf-sheet-back:not([hidden])) { overflow: hidde
 .bk-measure[hidden] { display: none; }
 @media (max-width: 700px) {
   .bk-chart-body { flex-direction: column; }
+  /* In the column the chart keeps its own height (flex: 1 would shrink it to nothing). */
+  .bk-chart-body .bk-chart { flex: none; height: 320px; }
   .bk-chart-tools { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); }
   .bk-tool-gap { width: 1px; height: auto; margin: 2px 4px; }
 }
@@ -1511,3 +1519,33 @@ body.watching .explain { display: none; }
 .about li { margin: 0 0 8px; }
 .about li b a { color: var(--text); text-decoration: none; }
 html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { display: none; }
+/* The amounts start in the middle of each side, as on the order-book tools. */
+.bk-side { table-layout: fixed; }
+.bk-side th:first-child, .bk-side td:first-child { width: 50%; }
+.bk-side th:nth-child(2), .bk-side td:nth-child(2) { text-align: left; }
+.hm-mini .hm-tile .hm-mini-logo { flex: none; margin: 0 auto 1px; border-radius: 50%; }
+
+/* Phones: the wallet's head as on the analytics apps — the picture beside the name at the top, the actions as
+   icons on the right of that row, then the address, the total and the networks in one row that scrolls. */
+@media (max-width: 720px) {
+  .ex-head { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; }
+  .ex-head .ex-avatar { grid-row: 1; grid-column: 1; width: 48px; height: 48px; font-size: 19px; }
+  .ex-head .ex-who { display: contents; }
+  .ex-head .ex-name-row { grid-row: 1; grid-column: 2; min-width: 0; }
+  .ex-head .ex-name-row h1 { overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .ex-head .ex-actions { grid-row: 1; grid-column: 3; flex-wrap: nowrap; gap: 0; }
+  .ex-head .ex-address, .ex-head .ex-total, .ex-head .ex-tags { grid-column: 1 / -1; }
+  .ex-head .ex-address code { font-size: 12px; }
+  .ex-head .ex-tags { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
+  .ex-head .ex-tags::-webkit-scrollbar { display: none; }
+  .ex-head .ex-tags > * { flex: none; }
+  .ex-head .ex-actions .act { display: grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; background: none; color: var(--text); font-size: 0; }
+  .ex-head .ex-actions .act::before { content: ""; width: 22px; height: 22px; background: currentColor; -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+  .ex-head .ex-actions .act.on { color: var(--up); }
+  .ex-head .ex-actions .act > *, .ex-head .ex-actions .act::after { display: none; }
+  .ex-head .ex-tags { padding-bottom: 4px; }
+  #visualize { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3Ccircle cx='5' cy='5' r='2'/%3E%3Ccircle cx='19' cy='5' r='2'/%3E%3Ccircle cx='5' cy='19' r='2'/%3E%3Ccircle cx='19' cy='19' r='2'/%3E%3Cpath d='M6.5 6.5l3.4 3.4M17.5 6.5l-3.4 3.4M6.5 17.5l3.4-3.4M17.5 17.5l-3.4-3.4'/%3E%3C/svg%3E"); }
+  #track { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z'/%3E%3Cpath d='M10 21h4'/%3E%3C/svg%3E"); }
+  #share { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 8l5-5 5 5'/%3E%3Cpath d='M5 13v7h14v-7'/%3E%3C/svg%3E"); }
+  #suggest { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M13 7l4 4'/%3E%3C/svg%3E"); }
+}

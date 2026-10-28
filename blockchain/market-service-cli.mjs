@@ -93,6 +93,12 @@ screener?.start();
 densities?.start();
 book?.start(() => (screener?.snapshot().rows ?? []).map((row) => row.symbol));
 liquidations?.start();
+// The market list's coin pictures kept on this server ahead of the visitors (market-logos.mjs), every ten minutes.
+if (logos && !fixture) {
+  const warmLogos = () => void logos.warmCoins([...service.state.coins, ...service.state.trendingCoins].map((coin) => coin.image));
+  setTimeout(warmLogos, 30_000).unref?.();
+  setInterval(warmLogos, 10 * 60_000).unref?.();
+}
 chain.patoshi?.start();
 if (!fixture) chain.names.start(); // the group lists of the open labels, copied into the book a page at a time
 // Every hour, names from the wallets' behaviour in the store of transfers (deposit addresses, hot wallets).

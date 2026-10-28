@@ -41,8 +41,10 @@ function render() {
   const needle = state.query.toUpperCase().replace(/\s+/g, "");
   const rows = sortBy(data.rows.filter((row) => (state.exchange === "all" || row.exchange === state.exchange) && (!needle || row.symbol.includes(needle))),
     sort, (row, key) => (key === "symbol" ? row.symbol : row[key]));
-  $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#rows"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = `${row.exchange}:${row.symbol}:${row.at}`;
     if (row.id) tr.addEventListener("click", () => { location.href = coinUrl(row); });
     const name = node("td", "left");
     const cell = node("span", "coin-cell");

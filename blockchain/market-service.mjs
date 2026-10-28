@@ -92,7 +92,8 @@ export function normalizeGlobal(value) {
   const data = value?.data;
   if (!data) throw new Error("global market data is invalid");
   return {
-    marketCap: finite(data.total_market_cap?.usd), volume: finite(data.total_volume?.usd),
+    // CoinGecko sometimes answers a zero total: no figure rather than a wrong one (the last good one stays).
+    marketCap: finite(data.total_market_cap?.usd) || null, volume: finite(data.total_volume?.usd) || null,
     marketCapChange24h: finite(data.market_cap_change_percentage_24h_usd),
     btcDominance: finite(data.market_cap_percentage?.btc), ethDominance: finite(data.market_cap_percentage?.eth),
     coins: finite(data.active_cryptocurrencies), exchanges: finite(data.markets),
@@ -284,7 +285,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   const state = { coins: [], global: null, trending: [], trendingCoins: [], fearGreed: null, updatedAt: null, errors: {} };
   const community = new Map(); // coin id → { up: percent of rise votes or null, at }
   const sources = {
-    coins: [`${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1` +
+    coins: [`${COINGECKO}/coins/markets?vs_currency=usd&precision=full&order=market_cap_desc&per_page=100&page=1` +
       "&sparkline=true&price_change_percentage=1h,24h,7d", normalizeCoins],
     global: [`${COINGECKO}/global`, normalizeGlobal, 180_000],
     trending: [`${COINGECKO}/search/trending`, normalizeTrending, 300_000],
@@ -335,14 +336,17 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     await Promise.all(Object.entries(sources).map(async ([key, [url, normalize, every = 0]]) => {
       if (fetchedAt[key] && now() - fetchedAt[key] < every && !state.errors[key]) return;
       try {
-        state[key] = normalize(await cg(url));
+        const value = normalize(await cg(url));
+        // A figure the source left out keeps its last good value.
+        state[key] = key === "global" && state.global ? { ...value, marketCap: value.marketCap ?? state.global.marketCap, volume: value.volume ?? state.global.volume } : value;
         fetchedAt[key] = now();
         delete state.errors[key];
       } catch (error) {
         state.errors[key] = String(error?.message ?? error).slice(0, 200);
       }
     }));
-    if (state.coins.length) state.updatedAt = now();
+    // "Updated" means the prices were read now: a failed read keeps the last time.
+    if (state.coins.length && !state.errors.coins) state.updatedAt = now();
     await trendingRows();
     await refreshExchangeLogos();
     if (accounts?.checkAlerts && !state.errors.coins) await checkAlerts();
@@ -376,7 +380,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (key === trendingAsked && now() - trendingAt < 300_000) return;
     try {
       if (now() < coolUntil) return;
-      state.trendingCoins = normalizeCoins(await cg(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${key}&per_page=50` +
+      state.trendingCoins = normalizeCoins(await cg(`${COINGECKO}/coins/markets?vs_currency=usd&precision=full&ids=${key}&per_page=50` +
         "&sparkline=true&price_change_percentage=1h,24h,7d"));
       trendingAsked = key;
       trendingAt = now();
@@ -409,7 +413,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       const prices = new Map(state.coins.map((coin) => [coin.id, coin]));
       const missing = accounts.alertCoins().filter((id) => !prices.has(id) && COIN_ID.test(id)).slice(0, 250);
       if (missing.length) {
-        const list = await cg(`${COINGECKO}/coins/markets?vs_currency=usd&ids=${missing.join(",")}&per_page=250` +
+        const list = await cg(`${COINGECKO}/coins/markets?vs_currency=usd&precision=full&ids=${missing.join(",")}&per_page=250` +
           "&price_change_percentage=24h");
         for (const coin of Array.isArray(list) ? list : []) {
           const quote = { price: finite(coin?.current_price),
@@ -439,7 +443,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
   // GET /market/coins?page=N — pages after the first hundred coins, 100 a page, on demand.
   async function coinsPage(page) {
     if (page === 1) return state.coins;
-    const entry = await onDemand(`coins:${page}`, `${COINGECKO}/coins/markets?vs_currency=usd&order=market_cap_desc` +
+    const entry = await onDemand(`coins:${page}`, `${COINGECKO}/coins/markets?vs_currency=usd&precision=full&order=market_cap_desc` +
       `&per_page=100&page=${page}&sparkline=true&price_change_percentage=1h,24h,7d`, normalizeCoins, 180_000);
     return entry.missing ? [] : entry.value;
   }
@@ -475,10 +479,23 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       return stand();
     }
     if (entry.missing) return null;
-    if (kind !== "coin") return entry.value;
+    // A kept copy can be minutes or hours old (CoinGecko busy, or read back from disk): the market list,
+    // refreshed every minute, sets the figures the visitor sees, so the page never shows another price.
+    const fresh = row && state.updatedAt && now() - state.updatedAt < 300_000 && row.price !== null && now() - entry.at > 60_000 ? row : null;
+    if (kind !== "coin") return fresh ? withPrice(entry.value, fresh.price) : entry.value;
     if (entry.value.sentimentUp !== null) community.set(id, { up: entry.value.sentimentUp, at: now() });
+    const value = fresh ? { ...entry.value, price: fresh.price, change1h: fresh.change1h, change24h: fresh.change24h, change7d: fresh.change7d,
+      marketCap: fresh.marketCap ?? entry.value.marketCap, volume: fresh.volume ?? entry.value.volume, rank: fresh.rank ?? entry.value.rank,
+      high24h: entry.value.high24h === null ? null : Math.max(entry.value.high24h, fresh.price),
+      low24h: entry.value.low24h === null ? null : Math.min(entry.value.low24h, fresh.price) } : entry.value;
     // The markets table shows each exchange's logo; without the list the names stand alone.
-    return { ...entry.value, tickers: entry.value.tickers.map((ticker) => ({ ...ticker, logo: exchangeLogos[ticker.exchange] ?? null })) };
+    return { ...value, tickers: value.tickers.map((ticker) => ({ ...ticker, logo: exchangeLogos[ticker.exchange] ?? null })) };
+  }
+  // A chart ends at the current price: a kept chart's last point may be older than the list's price.
+  function withPrice(chart, price) {
+    const last = chart.prices.at(-1);
+    if (!last || now() - last[0] < 60_000) return chart;
+    return { ...chart, prices: [...chart.prices, [now(), price]] };
   }
   function partialCoin(row) {
     // The coin's contracts come from the coin list the explorer keeps, so its trades can show while the rest waits.
@@ -495,7 +512,10 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     if (row.sparkline.length < 2) throw Object.assign(new Error("busy"), { status: 503 });
     const step = 7 * 86_400_000 / (row.sparkline.length - 1);
     const start = now() - 7 * 86_400_000;
-    return { prices: row.sparkline.map((value, index) => [Math.round(start + index * step), value]), caps: [], volumes: [], partial: true, days: 7 };
+    // The week's prices end at the current price, so the line and its change agree with the header.
+    const prices = row.sparkline.map((value, index) => [Math.round(start + index * step), value]);
+    if (row.price !== null) prices[prices.length - 1] = [now(), row.price];
+    return { prices, caps: [], volumes: [], partial: true, days: 7 };
   }
 
   function send(response, status, body, maxAge = 30) {
@@ -533,7 +553,7 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
       const ids = [...new Set((url.searchParams.get("ids") ?? "").split(",").filter((id) => COIN_ID.test(id)))].sort().slice(0, 50);
       if (!ids.length) return send(response, 200, { coins: [] }, 60);
       try {
-        const entry = await onDemand(`ids:${ids.join(",")}`, `${COINGECKO}/coins/markets?vs_currency=usd&ids=${ids.join(",")}&per_page=50` +
+        const entry = await onDemand(`ids:${ids.join(",")}`, `${COINGECKO}/coins/markets?vs_currency=usd&precision=full&ids=${ids.join(",")}&per_page=50` +
           "&sparkline=true&price_change_percentage=1h,24h,7d", normalizeCoins, 120_000);
         send(response, 200, { coins: entry.missing ? [] : entry.value }, 60);
       } catch {

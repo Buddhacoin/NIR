@@ -357,8 +357,10 @@ async function renderCharts(list) {
   if (view === "allocation") drawAllocation(list);
   const held = list.filter((item) => item.amount > 1e-12).sort((left, right) => (right.value ?? 0) - (left.value ?? 0));
   if (!held.length && !list.length) return;
-  if (view === "history") $("#plot").replaceChildren(node("p", "status", t().chartLoading));
-  $("#perf").replaceChildren(node("p", "status", t().chartLoading));
+  // A chart already drawn stays until the new one is ready (a refresh does not blank it); only an empty box says it is building.
+  const empty = (box) => !box.querySelector("svg");
+  if (view === "history" && empty($("#plot"))) $("#plot").replaceChildren(node("p", "status", t().chartLoading));
+  if (empty($("#perf"))) $("#perf").replaceChildren(node("p", "status", t().chartLoading));
   // "All" reaches back to the first transaction, up to a year.
   const first = Math.min(...chosen().map((record) => record.at));
   const range = days === "all" ? ["1", "7", "30", "90", "365"].find((option) => Date.now() - Number(option) * 86_400_000 <= first) ?? "365" : days;

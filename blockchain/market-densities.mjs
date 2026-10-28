@@ -69,10 +69,13 @@ export function createDensities({ get, now = Date.now, coins = () => [], coinOf 
     try {
       if (name === "okx" && !okxSizes) {
         const list = await get(OKX_SIZES);
-        okxSizes = new Map((Array.isArray(list?.data) ? list.data : []).map((item) => {
+        const read = new Map((Array.isArray(list?.data) ? list.data : []).map((item) => {
           const match = new RegExp(`^([A-Z0-9]+)-${QUOTE}-SWAP$`).exec(item?.instId ?? "");
           return match ? [match[1], num(item.ctVal)] : null;
         }).filter((entry) => entry && entry[1] > 0));
+        // A failed read is asked again next time, not kept empty until a restart.
+        if (!read.size) return false;
+        okxSizes = read;
       }
       const book = exchange.read(await get(exchange.url(symbol)), symbol, okxSizes);
       if (!book.bids.length || !book.asks.length) { missing.set(key, now() + 3_600_000); return false; }

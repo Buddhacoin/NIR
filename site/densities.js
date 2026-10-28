@@ -36,7 +36,8 @@ const sort = { key: "usd", dir: -1 };
 let data = null;
 
 function priceText(value) {
-  return `$${value.toLocaleString(locale(), value >= 1 ? { maximumFractionDigits: value >= 1000 ? 1 : 4 } : { maximumSignificantDigits: 5 })}`;
+  // The exchange's own price as it gives it (up to eight digits), not rounded off its tick.
+  return `$${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })}`;
 }
 function age(since) {
   const minutes = Math.max(0, Math.round((Date.now() - since) / 60_000));
@@ -65,8 +66,10 @@ function render() {
   $("#note").textContent = t().updated(new Date(data.updatedAt).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
     data.rows.length, data.exchanges.map((name) => EXCHANGE_NAMES[name] ?? name).join(", "));
   const rows = chosen().slice(0, 300);
-  $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#rows"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = `${row.exchange}:${row.symbol}:${row.side}:${row.price}`;
     if (row.id) tr.addEventListener("click", () => { location.href = coinUrl(row); });
     const name = node("td", "left");
     const cell = node("span", "coin-cell");

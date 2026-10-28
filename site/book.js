@@ -11,7 +11,7 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   tabTrends: "Trends", tabDensities: "Order book walls", tabBook: "Order book", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
-  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", tools: "Tools",
+  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", stepLabel: "Price step", tools: "Tools",
   settings: "⚙ Settings", chartSettings: "📈 Chart", tradesFeed: "⚡ Trades feed",
   source: "The book, trades and candles come from the exchanges' open APIs and streams, every 2 seconds. Prices are the exchange's own levels; orders of at least the smallest within the depth show, big ones with a lighter bold row; the totals on top are every order within the depth. Point at a row for the volume from the price through it. Not financial advice.",
   exchangesCredit: "the exchanges' open APIs",
@@ -19,7 +19,7 @@ const en = {
   howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { modes: { single: "Одиночный режим", multi: "Конструктор", stats: "Статистика" }, bid: "Покупка (BID)", ask: "Продажа (ASK)", price: "Цена", amount: "Объём", time: "Время", type: "Тип",
+  ru: { modes: { single: "Одиночный режим", multi: "Конструктор", stats: "Статистика" }, bid: "Покупка (BID)", ask: "Продажа (ASK)", price: "Цена", amount: "Объём", quantity: "Кол-во", sum: "Сумма", stepLabel: "Шаг цены", time: "Время", type: "Тип",
     buy: "BUY", sell: "SELL", loading: "Загружаю стакан…", failed: (name) => `${name}: этой пары нет или биржа не ответила`, none: "Нет уровней больше минимального ордера в пределах глубины.",
     noTrades: "Нет сделок больше минимальной.", total: "Всего в пределах глубины", exchangeCol: "Биржа",
     settingsTitle: "Настройки", chartTitle: "Настройки графика", bookHead: "Стакан", tradesHead: "Лента сделок", more: "Дополнительно",
@@ -38,7 +38,7 @@ const words = {
     tools: { cursor: "Курсор", hline: "Горизонтальная линия: нажмите на график", trend: "Трендовая линия: две точки на графике", ruler: "Линейка: две точки — изменение в % и цене",
       clear: "Стереть рисунки", fit: "Весь график", indicator: "Индикатор" },
     through: (amount) => `Всего от цены до этого уровня: ${amount}` },
-  en: { modes: { single: "Single", multi: "Constructor", stats: "Statistics" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", time: "Time", type: "Type",
+  en: { modes: { single: "Single", multi: "Constructor", stats: "Statistics" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", quantity: "Qty", sum: "Value", stepLabel: "Price step", time: "Time", type: "Type",
     buy: "BUY", sell: "SELL", loading: "Loading the book…", failed: (name) => `${name}: no such pair, or the exchange did not answer`, none: "No levels above the smallest order within the depth.",
     noTrades: "No trades above the smallest.", total: "Total within the depth", exchangeCol: "Exchange",
     settingsTitle: "Settings", chartTitle: "Chart settings", bookHead: "Order book", tradesHead: "Trades feed", more: "More",
@@ -90,12 +90,16 @@ function regroup(levels, step, down) {
 // levels show, a big one is among the eight biggest.
 const roundDown = (value) => { if (!(value > 0)) return 0; const power = 10 ** Math.floor(Math.log10(value)); return Math.floor(value / power * 2) / 2 * power; };
 // In the constructor each exchange may have its own (cfg.per[exchange]), as books differ in size.
-function thresholds(view, ex) {
-  const sizes = [...view.bids, ...view.asks].map(([price, amount]) => sizeOf(price, amount)).sort((left, right) => right - left);
-  const nth = (index) => sizes[Math.min(sizes.length - 1, index)] ?? 0;
+function thresholds(view, ex, price) {
+  const sorted = (list) => list.map(([level, amount]) => sizeOf(level, amount)).sort((left, right) => right - left);
+  const sizes = sorted([...view.bids, ...view.asks]);
+  // The smallest order shown is set by the levels next to the price (about twenty a side within 1%), as on
+  // the order-book tools, so the book starts at the market's price and not at the first far wall.
+  const close = sorted([...view.bids, ...view.asks].filter(([level]) => !price || Math.abs(level - price) / price <= 0.01));
+  const nth = (list, index) => list[Math.min(list.length - 1, index)] ?? 0;
   const own = cfg.mode === "multi" ? cfg.per?.[ex] ?? {} : {};
-  const min = own.minOrder ?? cfg.minOrder ?? roundDown(nth(40));
-  return { min, big: own.bigOrder ?? cfg.bigOrder ?? Math.max(min * 2, roundDown(nth(8))) };
+  const min = own.minOrder ?? cfg.minOrder ?? roundDown(nth(close.length ? close : sizes, 40));
+  return { min, big: own.bigOrder ?? cfg.bigOrder ?? Math.max(min * 2, roundDown(nth(sizes, 8))) };
 }
 // Decimals of the exchange's prices (its tick), read off the levels; a set step or setting wins.
 const decimalsOf = (value) => { const text = String(value); return text.includes("e-") ? Number(text.split("e-")[1]) : (text.split(".")[1] ?? "").length; };
@@ -105,7 +109,10 @@ const amountText = (value) => {
   const digits = cfg.amountDigits ?? (Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 1 ? 2 : 4);
   return value.toLocaleString(locale(), { maximumFractionDigits: digits, minimumFractionDigits: cfg.amountDigits ?? 0 });
 };
-const unitText = (value, base) => (cfg.usd ? usdShort(value) : `${amountText(value)} ${base.toLowerCase()}`);
+// Money in the pair's quote: dollars for the stablecoin (and the exchanges quoting dollars), bitcoin for the BTC pairs.
+const money = (value) => (cfg.quote === "BTC" ? `${value.toLocaleString(locale(), { maximumSignificantDigits: 6 })} btc` : usdShort(value));
+const quotePrice = (value) => (cfg.quote === "BTC" ? `${value.toLocaleString(locale(), { maximumSignificantDigits: 8 })} BTC` : price(value));
+const unitText = (value, base) => (cfg.usd ? money(value) : `${amountText(value)} ${base.toLowerCase()}`);
 
 // A book as shown: within the depth, its totals there (every order, the small ones too), the levels of at
 // least the smallest order, each with the volume from the price through it.
@@ -120,7 +127,7 @@ function view(data) {
   }
   const digits = cfg.step ? digitsFor(cfg.step) : Math.min(8, Math.max(0, ...[...bids, ...asks].slice(0, 60).map(([price]) => decimalsOf(price))));
   const within = (list) => { const row = list?.[Math.min(100, Math.max(1, Math.round(cfg.depth))) - 1]; return { coin: row?.[0] ?? 0, usd: row?.[1] ?? 0 }; };
-  const limits = thresholds({ bids, asks }, data.ex);
+  const limits = thresholds({ bids, asks }, data.ex, data.price);
   const keep = (list) => list.filter(([price, amount]) => sizeOf(price, amount) >= limits.min).slice(0, 400);
   return { digits, step: cfg.step ?? 10 ** -digits, price: data.price, totals: { bids: within(data.totals?.bids), asks: within(data.totals?.asks) },
     bids: keep(bids), asks: keep(asks), limits };
@@ -155,12 +162,34 @@ function renderControls() {
   $("#pair").value = cfg.base;
   $("#toggle-trades").classList.toggle("on", cfg.trades);
   $("#chart-box").hidden = !cfg.chart || cfg.mode !== "single";
-  $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${cfg.quote}`;
+  // The exchange's own quote (Coinbase and Kraken trade dollars, not the stablecoin), as it answered.
+  const answered = books.get(cfg.ex)?.data?.quote;
+  $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${answered ?? cfg.quote}`;
+}
+// The amount column's head says what it counts, as the exchanges write it: "Qty (ETH)", or the money in dollar mode.
+const amountHead = (base) => (cfg.usd ? `${t().sum} (${cfg.quote === "BTC" ? "BTC" : "$"})` : `${t().quantity} (${base})`);
+// The price step, as on the exchanges' books: the exchange's own prices, or 10, 100, 1,000… of its tick.
+function renderStep(first) {
+  const select = $("#step");
+  if (!select || !first) return;
+  const shown = view({ ...first, bids: first.bids.slice(0, 60), asks: first.asks.slice(0, 60) });
+  const tick = cfg.step ? null : 10 ** -shown.digits;
+  const base = tick ?? Number(select.dataset.tick || 0);
+  if (!base) return;
+  select.dataset.tick = String(base);
+  const steps = [1, 10, 50, 100, 500, 1000, 5000, 10000].map((times) => Number((base * times).toPrecision(6))).filter((step) => step < first.price / 20);
+  const key = steps.join(",");
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.replaceChildren(...steps.map((step, index) => Object.assign(node("option", "", index === 0 ? `${step} · ${t().rawStep}` : String(step)), { value: index === 0 ? "" : String(step) })));
+  }
+  select.value = cfg.step ? String(cfg.step) : "";
 }
 function renderConfig() {
   const first = [...books.values()].find((item) => item.data)?.data;
   if (!first) { $("#config").textContent = ""; return; }
   const shown = view(first);
+  renderStep(first);
   $("#config").textContent = t().config({ depth: cfg.depth >= 100 ? t().max : `${cfg.depth}%`, min: unitText(shown.limits.min, cfg.base), big: unitText(shown.limits.big, cfg.base),
     minTrade: unitText(tradeLimits().min, cfg.base), step: cfg.step ? priceText(cfg.step, shown.digits) : t().rawStep });
   // How far the exchange's book reaches: the open answers of some stop a few per cent from the price.
@@ -179,11 +208,11 @@ function sideTable(kind, shown, base) {
   head.innerHTML = `<tr><th class="left"></th><th></th></tr>`;
   head.querySelector("th").textContent = kind === "bid" ? t().bid : t().ask;
   // The unit in the head, so it reads plainly: coins (or dollars in dollar mode).
-  head.querySelectorAll("th")[1].textContent = `${t().amount}, ${cfg.usd ? "$" : base.toLowerCase()}`;
+  head.querySelectorAll("th")[1].textContent = amountHead(base);
   const body = node("tbody");
   const sum = node("tr", "bk-total");
   sum.title = t().total;
-  sum.append(node("td", "left", usdShort(total.usd)), node("td", "", `${amountText(total.coin)} ${base.toLowerCase()}`));
+  sum.append(node("td", "left", money(total.usd)), node("td", "", `${amountText(total.coin)} ${base.toLowerCase()}`));
   body.append(sum);
   const biggest = Math.max(1e-12, ...list.map(([price, amount]) => sizeOf(price, amount)));
   if (!list.length) { const row = node("tr"); const cell = node("td", "muted ex-empty", t().none); cell.colSpan = 2; row.append(cell); body.append(row); }
@@ -193,7 +222,7 @@ function sideTable(kind, shown, base) {
     // On a pointer: every order from the price through this level, the small ones too.
     if (through) row.title = t().through(`${amountText(through)} ${base.toLowerCase()}`);
     row.style.setProperty("--fill", `${Math.round((size / biggest) * 100)}%`);
-    row.append(node("td", "left", priceText(price, shown.digits)), node("td", "", cfg.usd ? usdShort(size) : amountText(amount)));
+    row.append(node("td", "left", priceText(price, shown.digits)), node("td", "", cfg.usd ? money(size) : amountText(amount)));
     body.append(row);
   }
   table.append(head, body);
@@ -212,7 +241,7 @@ function tradesTable(shown, withExchange) {
   const table = node("table", "ex-table bk-trades");
   const head = node("thead");
   const row = node("tr");
-  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [`${t().amount}, ${cfg.usd ? "$" : cfg.base.toLowerCase()}`], [t().type]]) row.append(node("th", left ? "left" : "", label));
+  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [amountHead(cfg.base)], [t().type]]) row.append(node("th", left ? "left" : "", label));
   head.append(row);
   const body = node("tbody");
   const list = trades.filter((item) => sizeOf(item.price, item.amount) >= limits.min).slice(0, cfg.tradesCount);
@@ -221,7 +250,7 @@ function tradesTable(shown, withExchange) {
     const line = node("tr", sizeOf(item.price, item.amount) >= limits.big ? "big" : "");
     line.append(node("td", "left muted", new Date(item.time).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })),
       ...(withExchange ? [node("td", "left", exchanges.find((entry) => entry.id === item.ex)?.name ?? item.ex)] : []),
-      node("td", "", price(item.price)), node("td", "", cfg.usd ? usdShort(item.price * item.amount) : amountText(item.amount)),
+      node("td", "", quotePrice(item.price)), node("td", "", cfg.usd ? money(item.price * item.amount) : amountText(item.amount)),
       node("td", item.side === "buy" ? "up" : "down", item.side === "buy" ? t().buy : t().sell));
     body.append(line);
   }
@@ -243,7 +272,8 @@ function renderBooks() {
     const shown = view(data);
     const panel = node("section", "bk-book");
     if (cfg.mode === "multi") {
-      const title = node("h3", "bk-book-title", `${exchanges.find((item) => item.id === id)?.name ?? id} `);
+      // Each exchange's own pair: Coinbase and Kraken quote dollars, the others the stablecoin.
+      const title = node("h3", "bk-book-title", `${exchanges.find((item) => item.id === id)?.name ?? id} · ${data.base}/${data.quote} `);
       title.append(node("b", "", `(${priceText(data.price, shown.digits)})`));
       // The exchange's own thresholds: shown, and set from its gear.
       const own = node("button", "bk-own", `${unitText(shown.limits.min, data.base)} / ${unitText(shown.limits.big, data.base)} ⚙`);
@@ -310,7 +340,7 @@ function drawLevels() {
   for (const [list, color] of [[shown.bids, support], [shown.asks, resistance]]) {
     for (const [price, amount] of list) {
       if (!near(price) || sizeOf(price, amount) < shown.limits.big) continue;
-      lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: cfg.usd ? usdShort(price * amount) : amountText(amount) }));
+      lines.push(series.createPriceLine({ price, color, lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: cfg.usd ? money(price * amount) : amountText(amount) }));
     }
   }
 }
@@ -473,7 +503,7 @@ function renderStats() {
   expected.append(grid, node("p", "muted", words.expectedNote));
   const table = node("table", "ex-table bk-daily");
   const head = node("tr");
-  for (const [label, left] of [[words.date, true], [words.open], [words.high], [words.low], [words.close], [words.change], [words.range], [`${t().amount}, ${cfg.base.toLowerCase()}`]]) head.append(node("th", left ? "left" : "", label));
+  for (const [label, left] of [[words.date, true], [words.open], [words.high], [words.low], [words.close], [words.change], [words.range], [`${t().quantity} (${cfg.base})`]]) head.append(node("th", left ? "left" : "", label));
   const thead = node("thead");
   thead.append(head);
   const body = node("tbody");
@@ -496,7 +526,74 @@ function renderStats() {
 
 // --- Loading: the books and trades every two seconds, the candles every half minute.
 const query = (ex) => `ex=${encodeURIComponent(ex)}&base=${encodeURIComponent(cfg.base)}&quote=${encodeURIComponent(cfg.quote)}`;
-const getJson = (url) => fetch(url).then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))));
+const fetchJson = (url) => fetch(url).then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))));
+// Binance's spot market turns the server's country (the Netherlands) away, so when the server cannot read it
+// the visitor's browser reads it straight from Binance's market-data addresses, which allow any site.
+const getJson = (url) => {
+  const params = new URL(url, location.origin).searchParams;
+  if (!url.startsWith("/market/book?") && !url.startsWith("/market/book/") || params.get("ex") !== "binance") return fetchJson(url);
+  if (direct.on) return fromBinance(url, params);
+  return fetchJson(url).catch((error) => {
+    if (error.message !== "502") throw error;
+    direct.on = true;
+    return fromBinance(url, params);
+  });
+};
+const direct = { on: false, pair: null, far: null, farAt: 0 };
+const BINANCE = "https://data-api.binance.vision/api/v3";
+const levels = (list) => (Array.isArray(list) ? list : []).map(([price, amount]) => [Number(price), Number(amount)]).filter(([price, amount]) => price > 0 && amount > 0);
+async function fromBinance(url, params) {
+  const pair = `${params.get("base")}${params.get("quote")}`.toUpperCase();
+  if (url.startsWith("/market/book/trades")) {
+    const list = await fetchJson(`${BINANCE}/trades?symbol=${pair}&limit=500`);
+    return { trades: list.map((item) => ({ time: Number(item.time), price: Number(item.price), amount: Number(item.qty), side: item.isBuyerMaker ? "sell" : "buy" }))
+      .sort((left, right) => right.time - left.time) };
+  }
+  if (url.startsWith("/market/book/candles")) {
+    const list = await fetchJson(`${BINANCE}/klines?symbol=${pair}&interval=${params.get("tf") ?? "1h"}&limit=500`);
+    return { candles: list.map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[5]].map(Number)) };
+  }
+  // The whole 5,000 levels every ten seconds, the nearest 1,000 every two: within Binance's limits for one visitor.
+  if (direct.pair !== pair || Date.now() - direct.farAt > 10_000) {
+    const answer = await fetchJson(`${BINANCE}/depth?symbol=${pair}&limit=5000`);
+    Object.assign(direct, { pair, far: { bids: levels(answer.bids), asks: levels(answer.asks) }, farAt: Date.now() });
+  }
+  const near = await fetchJson(`${BINANCE}/depth?symbol=${pair}&limit=1000`);
+  const merge = (far, list, down) => {
+    const close = levels(list);
+    if (!close.length) return far;
+    const edge = close.at(-1)[0];
+    return [...close, ...far.filter(([price]) => (down ? price < edge : price > edge))];
+  };
+  const book = { bids: merge(direct.far.bids, near.bids, true), asks: merge(direct.far.asks, near.asks, false) };
+  return { ex: "binance", base: params.get("base"), quote: params.get("quote"), pair, ...gatherBook(book), at: Date.now() };
+}
+// The server's reading of a book (blockchain/market-book.mjs gatherBook), for a book read in the browser: each
+// side's 800 largest levels with the volume from the best price through each, and the totals per whole per cent.
+function gatherBook({ bids, asks }, keep = 800) {
+  const best = Math.max(0, ...bids.map(([price]) => price));
+  const ask = Math.min(...asks.map(([price]) => price));
+  const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
+  if (!price) return { price: null, bids: [], asks: [], totals: { bids: [], asks: [] } };
+  const totals = {};
+  const side = (list, down, name) => {
+    const sorted = list.filter(([level]) => Math.abs(level - price) / price <= 1).sort((left, right) => (down ? right[0] - left[0] : left[0] - right[0]));
+    const sums = Array.from({ length: 100 }, () => [0, 0]);
+    let coins = 0;
+    const withVolume = sorted.map(([level, amount]) => {
+      coins += amount;
+      const percent = Math.min(100, Math.max(1, Math.ceil((Math.abs(level - price) / price) * 100 - 1e-9)));
+      sums[percent - 1][0] += amount;
+      sums[percent - 1][1] += amount * level;
+      return [level, amount, coins];
+    });
+    for (let index = 1; index < 100; index += 1) { sums[index][0] += sums[index - 1][0]; sums[index][1] += sums[index - 1][1]; }
+    totals[name] = sums;
+    const biggest = new Set([...[...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep), ...withVolume.slice(0, 200)]);
+    return withVolume.filter((row) => biggest.has(row));
+  };
+  return { price, bids: side(bids, true, "bids"), asks: side(asks, false, "asks"), totals, levels: bids.length + asks.length };
+}
 let generation = 0;
 async function loadBooks() {
   if (cfg.mode === "stats") return;
@@ -625,6 +722,7 @@ const closeDrawer = () => { $("#drawer").hidden = true; };
 $("#open-settings").addEventListener("click", () => openDrawer("book"));
 $("#open-chart").addEventListener("click", () => openDrawer("chart"));
 $("#toggle-trades").addEventListener("click", () => { cfg.trades = !cfg.trades; saveCfg(); restart(); });
+$("#step").addEventListener("change", () => { cfg.step = Number($("#step").value) || null; saveCfg(); renderBooks(); });
 $("#drawer-close").addEventListener("click", closeDrawer);
 $("#drawer").addEventListener("click", (event) => { if (event.target === $("#drawer")) closeDrawer(); });
 addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });

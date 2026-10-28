@@ -390,7 +390,8 @@ const coinUrl = (coin) => `/coin/${encodeURIComponent(coin.id)}`;
 const locale = () => (language === "en" ? "en-US" : "ru-RU");
 function price(value) {
   if (value === null || value === undefined) return "—";
-  const digits = value >= 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+  // Under $10 four decimals, so a stablecoin at 1.0049 does not read as $1.00.
+  const digits = value >= 10 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : value >= 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 4 }
     : { maximumSignificantDigits: 4 };
   return `$${value.toLocaleString(locale(), digits)}`;
 }
@@ -412,16 +413,66 @@ function percentCell(value) {
   return cell;
 }
 
+// Fresh rows laid over the ones on screen, as the market apps do: a row of the same coin (data-key) is kept
+// and only what changed in it is rewritten (a number, a colour), so a refresh changes the figures in place
+// instead of drawing the list again (no blink, no pictures loading anew). Rows of other coins come in new.
+function patchList(box, fresh) {
+  const kept = new Map([...box.children].filter((child) => child.dataset.key).map((child) => [child.dataset.key, child]));
+  const rows = fresh.map((row) => {
+    const old = row.dataset?.key ? kept.get(row.dataset.key) : null;
+    if (!old || old.nodeName !== row.nodeName) return row;
+    kept.delete(row.dataset.key);
+    patchNode(old, row);
+    return old;
+  });
+  // In order, moving what moved; the rest leaves.
+  rows.forEach((row, index) => { if (box.children[index] !== row) box.insertBefore(row, box.children[index] ?? null); });
+  while (box.children.length > rows.length) box.lastElementChild.remove();
+}
+function patchNode(old, row) {
+  if (old.nodeType === Node.TEXT_NODE) { if (old.nodeValue !== row.nodeValue) old.nodeValue = row.nodeValue; return; }
+  for (const { name } of [...old.attributes]) if (!row.hasAttribute(name)) old.removeAttribute(name);
+  for (const { name, value } of [...row.attributes]) if (old.getAttribute(name) !== value) old.setAttribute(name, value);
+  const before = [...old.childNodes];
+  const after = [...row.childNodes];
+  // A picture already shown stays (same address); a different shape is taken whole.
+  if (before.length !== after.length || before.some((node, index) => node.nodeName !== after[index].nodeName)) { old.replaceChildren(...after); return; }
+  before.forEach((node, index) => {
+    if (node.nodeName === "IMG") { if (node.getAttribute("src") !== after[index].getAttribute("src")) node.replaceWith(after[index]); return; }
+    patchNode(node, after[index]);
+  });
+}
+
+// Logos already shown on this page: a list drawn again (fresh data every minute) copies the loaded picture,
+// which paints at once, instead of a new one that starts empty.
+const shownLogos = new Map();
 function logo(coin) {
   if (coin.image) {
+    const seen = shownLogos.get(coin.image);
+    if (seen?.complete && seen.naturalWidth) {
+      const copy = seen.cloneNode();
+      copy.className = "logo";
+      copy.removeAttribute("style");
+      return copy;
+    }
     const image = document.createElement("img");
+    if (shownLogos.size < 2_000) image.addEventListener("load", () => shownLogos.set(coin.image, image), { once: true });
     image.className = "logo";
-    image.src = coin.image;
+    // CoinGecko's pictures come through this site's server, which keeps them and lets the browser reuse
+    // them (theirs say nothing about caching, so they were fetched again on every page).
+    const kept = /^https:\/\/(?:coin-images|assets)\.coingecko\.com\/coins\/images\/(\d+)\/(thumb|small|large|standard)\/([A-Za-z0-9._-]+)/.exec(coin.image);
+    image.src = kept ? `/market/logo/coin/${kept[1]}/large/${kept[3]}` : coin.image; // sharp on phones' dense screens
     image.alt = "";
-    image.loading = "lazy";
+    // Not lazy: a lazy picture starts empty and fills in while the list is in view, which reads as blinking.
+    image.decoding = "async";
     image.referrerPolicy = "no-referrer";
-    // A logo that fails to load becomes the coin's first letter.
-    image.addEventListener("error", () => image.replaceWith(logo({ ...coin, image: null })), { once: true });
+    // The server without the picture: CoinGecko's own address; that failing too, the coin's first letter.
+    let direct = !kept;
+    image.addEventListener("error", () => {
+      if (direct) { image.replaceWith(logo({ ...coin, image: null })); return; }
+      direct = true;
+      image.src = coin.image;
+    });
     return image;
   }
   const letter = document.createElement("i");
@@ -496,7 +547,10 @@ function renderStrip() {
 }
 // The market overview, asked once per page load and shared by the strip, the search and the page.
 let overviewAsk = null;
+let overviewAt = 0;
 function marketOverview() {
+  // Asked again after a minute: the strip and the heatmap redraw from it and must follow the market.
+  if (Date.now() - overviewAt > 60_000) { overviewAsk = null; overviewAt = Date.now(); }
   overviewAsk ??= fetch("/market/overview").then((response) => (response.ok ? response.json() : null)).catch(() => null)
     .then((value) => { if (!value) overviewAsk = null; return value; });
   return overviewAsk;
@@ -628,6 +682,14 @@ function warmUp() {
         const pages = [...document.querySelectorAll(".tabbar a[href^='/']")].map((link) => new URL(link.href).pathname).filter((path, index, all) => all.indexOf(path) === index);
         (registration.active ?? registration.installing ?? registration.waiting)?.postMessage({ warm: pages });
       }).catch(() => {});
+    }
+    // Browsers that can (Chrome, Edge): the bottom menu's pages are fetched ahead, and a page the finger or
+    // pointer is on its way to is prepared whole in the background, so the tap shows it at once.
+    if (HTMLScriptElement.supports?.("speculationrules") && !document.querySelector("script[type=speculationrules]")) {
+      const pages = [...document.querySelectorAll(".tabbar a[href^='/']")].map((link) => new URL(link.href).pathname).filter((path, index, all) => all.indexOf(path) === index);
+      const rules = { prefetch: [{ urls: pages, eagerness: "eager" }],
+        prerender: [{ where: { and: [{ href_matches: "/*" }, { not: { href_matches: "/market/*" } }, { not: { href_matches: "/api/*" } }] }, eagerness: "moderate" }] };
+      document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify(rules) }));
     }
     // The data the next pages start from, into the kept answers (FAST above).
     void fetch("/market/overview").catch(() => {});

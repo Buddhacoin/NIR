@@ -120,7 +120,8 @@ function okxTf(tf) { return { "1m": "1m", "5m": "5m", "15m": "15m", "1h": "1H", 
 function okxTrades(answer, size = 1) {
   return (answer?.data ?? []).map((item) => ({ time: num(item.ts), price: num(item.px), amount: num(item.sz) * size, side: item.side === "sell" ? "sell" : "buy" }));
 }
-function okxCandles(answer) { return (answer?.data ?? []).map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[5]]).reverse(); }
+// Volume in coins (volCcy, row[6]); row[5] counts contracts on the futures.
+function okxCandles(answer) { return (answer?.data ?? []).map((row) => [row[0] / 1000, row[1], row[2], row[3], row[4], row[6] ?? row[5]]).reverse(); }
 
 // A round step near `raw`: 1, 2, 2.5 or 5 times a power of ten.
 export function niceStep(raw) {
@@ -133,7 +134,7 @@ export function niceStep(raw) {
 // levels (the smaller ones only the smallest-order filter would hide anyway), best price first, each with
 // the volume of every order from the best price up to it; and the side's totals out to each whole per cent
 // of the price (totals[side][n - 1] = [coins, quote] within n %), so a page sums any depth it is set to.
-export function gatherBook({ bids, asks }, range = 1, keep = 800) {
+export function gatherBook({ bids, asks }, range = 1, keep = 800, nearest = 200) {
   const best = Math.max(0, ...bids.map(([price]) => price));
   const ask = Math.min(...asks.map(([price]) => price));
   const price = best && Number.isFinite(ask) ? (best + ask) / 2 : best || (Number.isFinite(ask) ? ask : 0);
@@ -152,7 +153,8 @@ export function gatherBook({ bids, asks }, range = 1, keep = 800) {
     });
     for (let index = 1; index < 100; index += 1) { sums[index][0] += sums[index - 1][0]; sums[index][1] += sums[index - 1][1]; }
     totals[name] = sums.map(([amount, quote]) => [Number(amount.toPrecision(10)), Number(quote.toPrecision(10))]);
-    const biggest = new Set([...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep));
+    // The largest levels, and the nearest ones whatever their size, so the book starts at the price.
+    const biggest = new Set([...[...withVolume].sort((left, right) => right[1] - left[1]).slice(0, keep), ...withVolume.slice(0, nearest)]);
     return withVolume.filter((row) => biggest.has(row)).map(([level, amount, through]) => [level, Number(amount.toPrecision(10)), Number(through.toPrecision(10))]);
   };
   return { price: Number(price.toPrecision(10)), bids: side(bids, true, "bids"), asks: side(asks, false, "asks"), totals, levels: bids.length + asks.length };
@@ -275,12 +277,17 @@ export function createDeep({ get, now = Date.now, socket = (url) => new WebSocke
         } catch {}
       };
       ws.onclose = ws.onerror = () => {
+        // Once only: closing from inside the handler would call it again.
+        ws.onclose = ws.onerror = null;
         clearInterval(ping);
         try { ws.close(); } catch {}
         if (book.ws !== ws) return;
         book.ws = null;
         book.ready = false;
         book.last = null;
+        // Changes were missed while it was down: the book starts again from the next snapshot.
+        book.bids.clear();
+        book.asks.clear();
         if (book.open) setTimeout(connect, 15_000).unref?.();
       };
     };
@@ -316,7 +323,9 @@ export function createBook({ get, now = Date.now, bookTtl = 2_000, candleTtl = 2
     if (!okxSizes) {
       const list = await get("https://www.okx.com/api/v5/public/instruments?instType=SWAP").catch(() => null);
       const pattern = new RegExp(`^([A-Z0-9]+)-${STABLE}-SWAP$`);
-      okxSizes = new Map((list?.data ?? []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
+      const read = new Map((list?.data ?? []).map((item) => [pattern.exec(item?.instId ?? "")?.[1], num(item?.ctVal)]).filter(([symbol, size]) => symbol && size > 0));
+      if (!read.size) return null; // asked again next time
+      okxSizes = read;
     }
     return okxSizes.get(base) ?? null;
   }
