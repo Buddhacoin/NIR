@@ -49,6 +49,14 @@ CoinGecko for prices and TradingView for charts.
 
 `blockchain/market-prices.mjs` reads the spot tickers of OKX, Gate, Bitget, KuCoin and Bybit every 20 seconds (one request each, no key). A coin's price is the volume-weighted average of the markets within 2 % of their median, turned into dollars at the stablecoin's own price; its day change from the same markets' prices a day ago. The market list, the coin pages and the sitemap take these over CoinGecko's figures where the exchanges agree with the list's price within 10 % (another coin under the same ticker stays out); the market cap follows the price (price × circulating supply). CoinGecko still gives the list itself, supply, descriptions, charts and trending. The last good list is kept in `cache.db`, so a restart while the sources are down opens with it; when CoinGecko has not answered for five minutes, CoinPaprika's free list (`/v1/tickers`) stands in, matched to the coins the site knows (their ids, pictures and week lines kept).
 
+## Wallets the site finds itself
+
+- `/wallets/` has two lists that grow on their own: **Whales** — the wallets the most money went through in 30 days in NIR Markets' own store of transfers (`ledger.busiest`), with the book's name when it has one (token contracts, routers, pools and bridges left out); **Found** — the newest names found from wallets' behaviour (`names.found`), marked as such (`GET /market/chain/popular?group=whales|found`).
+- Behaviour no longer takes a wallet that only takes in for a hot wallet (it must pay out about as often, `ledger.sent`): the first block's address, which many send keepsakes to, was marked an exchange. Such an earlier guess is taken back on the next hourly run (`names.retract`).
+- The list's balances ask again while a big wallet's tokens are still being counted, so the list and the wallet's page show the same sum; Satoshi Nakamoto's row (all his early coins) leads to his organisation page.
+- A coin or token the lists have no picture for (a new listing, a tokenised share) gets one by its ticker from the server (`/market/logo/symbol/<TICKER>`: CoinGecko's search, the open icon sets, a share's logo), kept once found. A listing's "price now" is its price on the exchange that listed it.
+- The order book's price step sits with the book; big orders stand out on both sides with a stronger bar, a band and an edge in the side's colour.
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the

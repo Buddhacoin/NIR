@@ -11,7 +11,7 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   tabTrends: "Trends", tabDensities: "Order book walls", tabBook: "Order book", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
-  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", stepLabel: "Price step", tools: "Tools",
+  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", stepLabel: "Price step", rawStepOption: "the exchange's prices", tools: "Tools",
   settings: "⚙ Settings", chartSettings: "📈 Chart", tradesFeed: "⚡ Trades feed",
   source: "The book, trades and candles come from the exchanges' open APIs and streams, every 2 seconds. Prices are the exchange's own levels; orders of at least the smallest within the depth show, big ones with a lighter bold row; the totals on top are every order within the depth. Point at a row for the volume from the price through it. Not financial advice.",
   exchangesCredit: "the exchanges' open APIs",
@@ -162,6 +162,7 @@ function renderControls() {
   $("#pair").value = cfg.base;
   $("#toggle-trades").classList.toggle("on", cfg.trades);
   $("#chart-box").hidden = !cfg.chart || cfg.mode !== "single";
+  $("#book-bar").hidden = cfg.mode === "stats";
   // The exchange's own quote (Coinbase and Kraken trade dollars, not the stablecoin), as it answered.
   const answered = books.get(cfg.ex)?.data?.quote;
   $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${answered ?? cfg.quote}`;

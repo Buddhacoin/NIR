@@ -631,6 +631,21 @@ export function createChain({ get = fetchExplorer, rpc = postRpc, now = Date.now
         const items = relabel(chosen);
         return reply(response, 200, { networks: [...Object.keys(EXPLORERS), ...Object.keys(NODES)], items }, 10), true;
       }
+      // GET /market/chain/popular?group=whales: the wallets the most money moved through in 30 days (NIR Markets'
+      // own store of transfers), with their names when known; ?group=found: names found from behaviour, newest first.
+      if (path === "/market/chain/popular" && ["whales", "found"].includes(url.searchParams.get("group"))) {
+        const ids = await nodes.coinIds().catch(() => null);
+        const notWallet = (address, name) => ids?.contract?.has(String(address).toLowerCase()) || /^0x0{40}$/i.test(address)
+          || /router|pool|bridge|swap|vault|aggregator|wrapped|token/i.test(name ?? "");
+        const items = url.searchParams.get("group") === "found"
+          ? names.found(200).map((row) => ({ address: row.address, name: row.name, entity: row.entity, category: row.category, found: row.at, guessed: true }))
+          : (ledger?.busiest(now() - 30 * 86_400_000, 300) ?? []).map((row) => {
+            const known = names.name(row.address);
+            return { address: row.address, name: known?.name ?? null, entity: known?.entity ?? null, logo: known?.logo ?? null, category: known?.category ?? null,
+              guessed: Boolean(known?.guessed), moved: row.usd, transfers: row.transfers };
+          });
+        return reply(response, 200, { items: items.filter((item) => !notWallet(item.address, item.name)).slice(0, 150), next: null }, 600), true;
+      }
       // GET /market/chain/popular?group=exchange|fund|hot-wallet&cursor=…: a page of known wallets.
       if (path === "/market/chain/popular") {
         const cursor = url.searchParams.get("cursor");

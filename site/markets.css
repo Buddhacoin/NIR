@@ -1549,3 +1549,15 @@ html[lang="en"] .about [lang="ru"], html:not([lang="en"]) .about [lang="en"] { d
   #share { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 8l5-5 5 5'/%3E%3Cpath d='M5 13v7h14v-7'/%3E%3C/svg%3E"); }
   #suggest { --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h4L19 9l-4-4L4 16z'/%3E%3Cpath d='M13 7l4 4'/%3E%3C/svg%3E"); }
 }
+/* Big orders stand out on both sides, as on the order-book tools: a stronger bar, a light band over the
+   row and an edge in the side's colour (the asks' bar rule is more specific, so these name both sides). */
+.bk-side.bid tbody tr.big:not(.bk-total) { --bar: color-mix(in srgb, var(--up) 55%, transparent); }
+.bk-side.ask tbody tr.big:not(.bk-total) { --bar: color-mix(in srgb, var(--down) 55%, transparent); }
+.bk-side.bid tbody tr.big:not(.bk-total), .bk-side.ask tbody tr.big:not(.bk-total) { background-color: color-mix(in srgb, var(--text) 14%, transparent); }
+.bk-side.bid tbody tr.big:not(.bk-total) { box-shadow: inset -4px 0 0 var(--up); }
+.bk-side.ask tbody tr.big:not(.bk-total) { box-shadow: inset 4px 0 0 var(--down); }
+/* The price step sits with the book, as on the exchanges' books. */
+.bk-book-bar { display: flex; justify-content: flex-end; margin: 4px 0 6px; }
+.bk-book-bar[hidden] { display: none; }
+.bk-step { display: flex; align-items: center; gap: 8px; }
+.bk-step select { padding: 6px 28px 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); color: var(--text); font: inherit; font-size: 13px; }

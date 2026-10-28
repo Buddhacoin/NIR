@@ -14,11 +14,15 @@ const en = {
   howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { groups: { all: "Все", featured: "Известные", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки" },
+  ru: { groups: { all: "Все", featured: "Известные", whales: "Киты", exchange: "Биржи", fund: "Фонды", "hot-wallet": "Горячие кошельки", found: "Найдено" },
+    moved: (usd) => `${usdShort(usd)} за 30 дней`, byBehaviour: "определено по поведению", whaleIntro: "Кошельки, через которые за 30 дней прошли самые крупные переводы (по нашей ленте переводов). Список обновляется сам.",
+    foundIntro: "Новые подписи, которые сервер нашёл сам по поведению кошельков: адреса пополнения бирж и вероятные горячие кошельки. Каждый час добавляются новые.",
     kinds: { exchange: "Биржа", fund: "Фонд", "hot-wallet": "Горячий кошелёк" }, filter: "Имя или адрес",
     loading: "загружаю…", unknown: "—", track: "☆ Следить", tracked: "★ Слежу", wallets: (count) => `${count} адресов →`, empty: "Ничего не найдено.",
     loadingList: "Загружаю список…", contract: "Контракт", wallet: "Кошелёк", signIn: "Войдите через Google, чтобы отслеживать адреса." },
-  en: { groups: { all: "All", featured: "Well known", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets" },
+  en: { groups: { all: "All", featured: "Well known", whales: "Whales", exchange: "Exchanges", fund: "Funds", "hot-wallet": "Hot wallets", found: "Found" },
+    moved: (usd) => `${usdShort(usd)} in 30 days`, byBehaviour: "found by behaviour", whaleIntro: "The wallets the largest transfers went through over 30 days (from our transfer feed). The list updates itself.",
+    foundIntro: "New labels the server found itself from wallets' behaviour: exchange deposit addresses and likely hot wallets. New ones come every hour.",
     kinds: { exchange: "Exchange", fund: "Fund", "hot-wallet": "Hot wallet" }, filter: "Name or address",
     loading: "loading…", unknown: "—", track: "☆ Watch", tracked: "★ Watching", wallets: (count) => `${count} wallets →`, empty: "Nothing found.",
     loadingList: "Loading the list…", contract: "Contract", wallet: "Wallet", signIn: "Sign in with Google to track addresses." },
@@ -46,6 +50,7 @@ async function loadCounts() {
 }
 const node = (tag, className = "", text = "") => Object.assign(document.createElement(tag), { className, textContent: text });
 const balances = new Map(); // address → { total, chains } once loaded, null if it failed
+const retried = new Map(); // address → how many times a partial answer was asked again
 const lists = {}; // group → { items, next, loading }
 let group = "all";
 const LABELED = ["exchange", "fund", "hot-wallet"]; // the groups from the open labels; "all" holds them and the hand-picked ones
@@ -58,7 +63,10 @@ function rowsOf() {
   const lang = language === "en" ? "en" : "ru";
   const featured = () => WHALES.map((item) => ({ address: item.address, name: item.name, kind: item.kind[lang], logo: null }));
   const labeled = (key) => (lists[key]?.items ?? []).map((item) => ({ address: item.address, name: item.name ?? shortAddress(item.address),
-    kind: [t().kinds[key], item.entity].filter(Boolean).join(" · "), logo: item.logo }));
+    // Whales: how much went through and what the book knows of them; finds: marked as found by behaviour.
+    kind: key === "whales" ? [t().moved(item.moved), categoryName(item.category), item.entity, item.guessed ? t().byBehaviour : null].filter(Boolean).join(" · ")
+      : key === "found" ? [categoryName(item.category), item.entity, t().byBehaviour].filter(Boolean).join(" · ")
+        : [t().kinds[key], item.entity].filter(Boolean).join(" · "), logo: item.logo ?? null }));
   if (group === "featured") return featured();
   if (group !== "all") return labeled(group);
   const seen = new Set();
@@ -67,6 +75,8 @@ function rowsOf() {
 
 function render() {
   document.title = `${language === "en" ? en.title : "Популярные кошельки"} — NIR Markets`;
+  $("#group-note").hidden = !["whales", "found"].includes(group);
+  $("#group-note").textContent = group === "whales" ? t().whaleIntro : group === "found" ? t().foundIntro : "";
   $("#filter").placeholder = t().filter;
   $("#kinds").replaceChildren(...Object.entries(t().groups).map(([key, label]) => {
     const button = node("button", key === group ? "on" : "", label);
@@ -89,11 +99,13 @@ function render() {
   $("#rows").replaceChildren(...(rows.length ? rows.map((item, index) => {
     const row = node("tr", "coin");
     row.dataset.address = item.address;
-    row.addEventListener("click", (event) => { if (!event.target.closest("a, button")) location.href = addressUrl(item.address); });
+    row.addEventListener("click", (event) => { if (!event.target.closest("a, button")) location.href = item.name === "Satoshi Nakamoto" && satoshi?.price ? entityUrl(item.name) : addressUrl(item.address); });
     const who = node("td", "left");
     // Satoshi Nakamoto's row counts all his early blocks' coins, not only the one address.
     const balance = item.name === "Satoshi Nakamoto" && satoshi?.price ? { total: satoshi.estimate * satoshi.price, chains: ["btc"] } : balances.get(item.address);
-    const link = Object.assign(node("a", "ex-whale"), { href: addressUrl(item.address) });
+    // Satoshi's row shows all his early coins, so it leads to the page that adds them up (one address holds few).
+    const whole = item.name === "Satoshi Nakamoto" && satoshi?.price;
+    const link = Object.assign(node("a", "ex-whale"), { href: whole ? entityUrl(item.name) : addressUrl(item.address) });
     // On a phone the balance stands under the name, so nothing hides past the screen's edge.
     const mobile = node("small", "w-mobile-balance", balance === undefined ? t().loading : balance === null ? t().unknown : price(balance.total));
     const label = node("span", "w-label");
@@ -166,6 +178,13 @@ function pump() {
       .then((data) => {
         balances.set(address, data ? { total: data.assets.reduce((sum, asset) => sum + (asset.usd ?? 0), 0),
           chains: [...new Set(data.assets.map((asset) => asset.chain))] } : null);
+        // A big wallet's first answer can lack the tokens the explorer has not counted yet (the wallet's
+        // page waits for them): asked again until whole, so the list shows the same sum as the page.
+        const tries = retried.get(address) ?? 0;
+        if (data?.networks?.some((item) => item.partial) && tries < 4) {
+          retried.set(address, tries + 1);
+          setTimeout(() => { queue.push(address); pump(); }, 15_000);
+        }
         working -= 1;
         render();
         pump();

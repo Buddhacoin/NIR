@@ -71,6 +71,12 @@ async function fetchPicture(url) {
   return bytes;
 }
 
+async function fetchJson(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  if (!response.ok) throw Object.assign(new Error(`search answered ${response.status}`), { status: response.status });
+  return response.json();
+}
+
 // `dir`: where pictures are kept; `catalogue(network)`: the assets catalogue's folder for a network.
 export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, catalogue = () => null } = {}) {
   if (dir) mkdirSync(dir, { recursive: true });
@@ -141,8 +147,55 @@ export function createLogos({ dir, fetchBytes = fetchPicture, now = Date.now, ca
     try { return await job; } finally { pending.delete(key); }
   }
 
+  // A picture for a ticker the market lists do not know (a new listing, a tokenised share): CoinGecko's
+  // search by the exact ticker, the open icon sets, then a share's logo by its ticker ("…STOCK" → the share).
+  // Kept once found; a ticker without one is asked again a day later, and the page shows its first letter.
+  async function symbolPicture(symbol) {
+    const key = `symbol-${symbol}`;
+    const path = join(dir, `${key}.img`);
+    if (existsSync(path)) return readFileSync(path);
+    if ((missing.get(key) ?? 0) > now()) return null;
+    if (pending.has(key)) return pending.get(key);
+    const job = (async () => {
+      const lower = symbol.toLowerCase();
+      const share = symbol.replace(/(?:STOCK|ON)$/, "") || symbol;
+      const tries = [
+        async () => {
+          const found = await fetchJson(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(symbol)}`);
+          const coin = (found?.coins ?? []).find((item) => String(item?.symbol ?? "").toUpperCase() === symbol);
+          return coin?.large ?? coin?.thumb ?? null;
+        },
+        async () => `https://assets.coincap.io/assets/icons/${lower}@2x.png`,
+        async () => `https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${lower}.png`,
+        async () => `https://financialmodelingprep.com/image-stock/${share}.png`,
+      ];
+      for (const source of tries) {
+        try {
+          const address = await source();
+          if (!address || !/^https:\/\//.test(address)) continue;
+          const bytes = await fetchBytes(address);
+          if (!pictureKind(bytes)) continue;
+          writeFileSync(path, bytes);
+          return bytes;
+        } catch {}
+      }
+      missing.set(key, now() + 86_400_000);
+      return null;
+    })();
+    pending.set(key, job);
+    try { return await job; } finally { pending.delete(key); }
+  }
+
   // Answers GET /market/logo/…, or returns false.
   async function handle(request, response, url) {
+    const ticker = /^\/market\/logo\/symbol\/([A-Z0-9]{1,15})$/.exec(url.pathname);
+    if (ticker && dir) {
+      const bytes = request.method === "GET" ? await symbolPicture(ticker[1]) : null;
+      response.writeHead(bytes ? 200 : 404, bytes ? { "content-type": pictureKind(bytes), "cache-control": "public, max-age=2592000, immutable",
+        "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'" } : { "content-type": "text/plain", "cache-control": "public, max-age=3600" });
+      response.end(bytes ?? "no picture");
+      return true;
+    }
     const coin = /^\/market\/logo\/coin\/(\d{1,8})\/(thumb|small|large|standard)\/([A-Za-z0-9._-]{1,100})$/.exec(url.pathname);
     if (coin && dir) {
       const bytes = request.method === "GET" ? await coinPicture(coin[1], coin[2], coin[3]) : null;

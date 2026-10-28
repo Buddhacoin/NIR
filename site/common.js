@@ -475,6 +475,16 @@ function logo(coin) {
     });
     return image;
   }
+  // No picture from the lists (a new listing, a tokenised share): the server looks one up by the ticker once.
+  if (/^[A-Z0-9]{1,15}$/.test(coin.symbol ?? "") && !coin.tickerTried) {
+    const image = document.createElement("img");
+    image.className = "logo";
+    image.alt = "";
+    image.decoding = "async";
+    image.src = `/market/logo/symbol/${coin.symbol}`;
+    image.addEventListener("error", () => image.replaceWith(logo({ ...coin, tickerTried: true })), { once: true });
+    return image;
+  }
   const letter = document.createElement("i");
   letter.className = "logo";
   letter.textContent = coin.symbol.slice(0, 1);
