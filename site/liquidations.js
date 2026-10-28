@@ -59,8 +59,10 @@ function render() {
   const needle = state.query.toUpperCase().replace(/\s+/g, "");
   const rows = sortBy(data.coins.map((row) => ({ ...row, long: row[`long${suffix}`], short: row[`short${suffix}`], total: row[`long${suffix}`] + row[`short${suffix}`] }))
     .filter((row) => row.total > 0 && (!needle || row.symbol.includes(needle))), sort, (row, key) => (key === "symbol" ? row.symbol : row[key])).slice(0, 200);
-  $("#coins").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#coins"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = row.symbol;
     if (row.id) tr.addEventListener("click", () => { location.href = coinUrl(row); });
     const name = node("td", "left");
     name.append(coinCell(row));

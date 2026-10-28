@@ -92,7 +92,8 @@ export function normalizeGlobal(value) {
   const data = value?.data;
   if (!data) throw new Error("global market data is invalid");
   return {
-    marketCap: finite(data.total_market_cap?.usd), volume: finite(data.total_volume?.usd),
+    // CoinGecko sometimes answers a zero total: no figure rather than a wrong one (the last good one stays).
+    marketCap: finite(data.total_market_cap?.usd) || null, volume: finite(data.total_volume?.usd) || null,
     marketCapChange24h: finite(data.market_cap_change_percentage_24h_usd),
     btcDominance: finite(data.market_cap_percentage?.btc), ethDominance: finite(data.market_cap_percentage?.eth),
     coins: finite(data.active_cryptocurrencies), exchanges: finite(data.markets),
@@ -335,7 +336,9 @@ export function createMarketService({ fetch: get = fetchJson, refreshMs = 60_000
     await Promise.all(Object.entries(sources).map(async ([key, [url, normalize, every = 0]]) => {
       if (fetchedAt[key] && now() - fetchedAt[key] < every && !state.errors[key]) return;
       try {
-        state[key] = normalize(await cg(url));
+        const value = normalize(await cg(url));
+        // A figure the source left out keeps its last good value.
+        state[key] = key === "global" && state.global ? { ...value, marketCap: value.marketCap ?? state.global.marketCap, volume: value.volume ?? state.global.volume } : value;
         fetchedAt[key] = now();
         delete state.errors[key];
       } catch (error) {

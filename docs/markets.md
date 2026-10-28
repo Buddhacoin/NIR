@@ -37,6 +37,14 @@ CoinGecko for prices and TradingView for charts.
 - The order book shows each exchange's own pair (Coinbase and Kraken quote dollars) and BTC-quoted money in BTC; OKX futures candles count coins, not contracts. A dropped Binance stream starts its book again from the next snapshot (no cancelled far wall stays), and a failed OKX instruments read is asked again.
 - Coin logos come through the site's server (`/market/logo/coin/<id>/<size>/<file>`, market-logos.mjs), kept on disk, fetched ahead for the market list every ten minutes and sent for a month of browser cache; CoinGecko's own carry no caching headers, so phones fetched them on every page.
 
+## Figures in place, pages ready before the tap
+
+- A list that refreshes (the home table, its cards and small heatmap, the screeners) lays its new rows over the ones on screen (`patchList` in `site/common.js`): a row of the same coin is kept and only the text and colours that changed are rewritten, so the figures change in place and pictures are not loaded again.
+- Browsers with speculation rules (Chrome, Edge) fetch the bottom menu's pages ahead and prepare a linked page whole when the pointer or finger heads for it; pages fade into each other (`@view-transition`) instead of flashing blank.
+- The order book has a price step choice beside the market, as on the exchanges' books (the exchange's own prices, then 10, 50, 100… of its tick), and its columns say what they count: "Qty (ETH)", or "Value ($)" in dollar mode.
+- On a phone a wallet's head is laid out as on the analytics apps: the picture beside the name, the actions as icons on that row, the networks in one row that scrolls.
+- CoinGecko's global figures: a zero market cap or volume (it sometimes answers so) keeps the last good one.
+
 ## Search engines
 
 The pages draw their figures in the browser, so what a crawler reads is in the

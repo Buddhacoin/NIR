@@ -56,8 +56,10 @@ function render() {
   $("#note").textContent = t().updated(new Date(data.updatedAt).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }),
     data.rows.length, data.exchanges.map((name) => EXCHANGE_NAMES[name] ?? name).join(", "));
   const rows = chosen().slice(0, 300);
-  $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#rows"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = row.symbol;
     if (row.id) tr.addEventListener("click", () => { location.href = coinUrl(row); });
     const name = node("td", "left");
     const cell = node("span", "coin-cell");

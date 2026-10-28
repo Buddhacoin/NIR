@@ -114,13 +114,14 @@ function visibleCoins() {
 
 function renderTable() {
   const body = $("#rows");
-  body.replaceChildren();
+  const fresh = [];
   const t = words[language];
   const coins = visibleCoins();
   markSort($("thead"), sort);
   for (const coin of coins) {
     const row = document.createElement("tr");
     row.className = "coin";
+    row.dataset.key = coin.id;
     const star = document.createElement("td");
     star.className = `star hide-s${watch.has(coin.id) ? " on" : ""}`;
     star.textContent = watch.has(coin.id) ? "★" : "☆";
@@ -193,8 +194,10 @@ function renderTable() {
       mood.title = count && count.rise + count.fall ? t.moodTitle(count.rise, count.fall) : t.communityTitle;
     }
     row.append(star, rank, name, value, hour, day, week, cap, volume, supply, mood, spark);
-    body.append(row);
+    fresh.push(row);
   }
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList(body, fresh);
   $("#status").textContent = !data ? $("#status").textContent
     : coins.length ? "" : tab === "watch" && !query ? t.watchEmpty : t.empty;
   renderPager();
@@ -209,9 +212,10 @@ function renderHeatmap() {
   const coins = (data?.coins ?? []).filter((coin) => coin.marketCap > 0 && !STABLE.has(coin.symbol)).slice(0, width > 200 ? 40 : 16);
   if (!width || !height || !coins.length) return;
   const tiles = squarify(coins.map((coin) => ({ coin, weight: Math.sqrt(coin.marketCap) })), 0, 0, width, height);
-  map.replaceChildren(...tiles.map(({ coin, x, y, width: w, height: h }) => {
+  patchList(map, tiles.map(({ coin, x, y, width: w, height: h }) => {
     const change = Number.isFinite(coin.change24h) ? coin.change24h : null;
     const tile = document.createElement("span");
+    tile.dataset.key = coin.id;
     tile.className = `hm-tile ${change === null ? "" : change >= 0 ? "up" : "down"}`;
     Object.assign(tile.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px`, fontSize: `${Math.max(9, Math.min(18, Math.sqrt(w * h) / 4.5))}px` });
     tile.style.setProperty("--heat", change === null ? "0" : Math.min(1, 0.18 + Math.abs(change) / 6).toFixed(2));
@@ -264,8 +268,9 @@ function renderCards() {
     $("#fg-dot").setAttribute("cy", (56 - 47 * Math.sin(angle)).toFixed(1));
   }
   const list = (target, coins, withPrice) => {
-    $(target).replaceChildren(...coins.slice(0, 8).map((coin, index) => {
+    patchList($(target), coins.slice(0, 8).map((coin, index) => {
       const item = document.createElement("li");
+      item.dataset.key = coin.id;
       const link = document.createElement("a");
       link.href = coinUrl(coin);
       const number = document.createElement("span");

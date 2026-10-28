@@ -413,6 +413,36 @@ function percentCell(value) {
   return cell;
 }
 
+// Fresh rows laid over the ones on screen, as the market apps do: a row of the same coin (data-key) is kept
+// and only what changed in it is rewritten (a number, a colour), so a refresh changes the figures in place
+// instead of drawing the list again (no blink, no pictures loading anew). Rows of other coins come in new.
+function patchList(box, fresh) {
+  const kept = new Map([...box.children].filter((child) => child.dataset.key).map((child) => [child.dataset.key, child]));
+  const rows = fresh.map((row) => {
+    const old = row.dataset?.key ? kept.get(row.dataset.key) : null;
+    if (!old || old.nodeName !== row.nodeName) return row;
+    kept.delete(row.dataset.key);
+    patchNode(old, row);
+    return old;
+  });
+  // In order, moving what moved; the rest leaves.
+  rows.forEach((row, index) => { if (box.children[index] !== row) box.insertBefore(row, box.children[index] ?? null); });
+  while (box.children.length > rows.length) box.lastElementChild.remove();
+}
+function patchNode(old, row) {
+  if (old.nodeType === Node.TEXT_NODE) { if (old.nodeValue !== row.nodeValue) old.nodeValue = row.nodeValue; return; }
+  for (const { name } of [...old.attributes]) if (!row.hasAttribute(name)) old.removeAttribute(name);
+  for (const { name, value } of [...row.attributes]) if (old.getAttribute(name) !== value) old.setAttribute(name, value);
+  const before = [...old.childNodes];
+  const after = [...row.childNodes];
+  // A picture already shown stays (same address); a different shape is taken whole.
+  if (before.length !== after.length || before.some((node, index) => node.nodeName !== after[index].nodeName)) { old.replaceChildren(...after); return; }
+  before.forEach((node, index) => {
+    if (node.nodeName === "IMG") { if (node.getAttribute("src") !== after[index].getAttribute("src")) node.replaceWith(after[index]); return; }
+    patchNode(node, after[index]);
+  });
+}
+
 // Logos already shown on this page: a list drawn again (fresh data every minute) copies the loaded picture,
 // which paints at once, instead of a new one that starts empty.
 const shownLogos = new Map();
@@ -652,6 +682,14 @@ function warmUp() {
         const pages = [...document.querySelectorAll(".tabbar a[href^='/']")].map((link) => new URL(link.href).pathname).filter((path, index, all) => all.indexOf(path) === index);
         (registration.active ?? registration.installing ?? registration.waiting)?.postMessage({ warm: pages });
       }).catch(() => {});
+    }
+    // Browsers that can (Chrome, Edge): the bottom menu's pages are fetched ahead, and a page the finger or
+    // pointer is on its way to is prepared whole in the background, so the tap shows it at once.
+    if (HTMLScriptElement.supports?.("speculationrules") && !document.querySelector("script[type=speculationrules]")) {
+      const pages = [...document.querySelectorAll(".tabbar a[href^='/']")].map((link) => new URL(link.href).pathname).filter((path, index, all) => all.indexOf(path) === index);
+      const rules = { prefetch: [{ urls: pages, eagerness: "eager" }],
+        prerender: [{ where: { and: [{ href_matches: "/*" }, { not: { href_matches: "/market/*" } }, { not: { href_matches: "/api/*" } }] }, eagerness: "moderate" }] };
+      document.head.append(Object.assign(document.createElement("script"), { type: "speculationrules", textContent: JSON.stringify(rules) }));
     }
     // The data the next pages start from, into the kept answers (FAST above).
     void fetch("/market/overview").catch(() => {});

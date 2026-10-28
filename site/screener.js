@@ -86,8 +86,10 @@ function render() {
   $("#note").textContent = [minutes < 240 ? t().warming(minutes) : "", t().updated(new Date(data.updatedAt).toLocaleTimeString(locale(), { hour: "2-digit", minute: "2-digit" }),
     data.rows.length, data.exchanges.map((name) => EXCHANGE_NAMES[name] ?? name).join(", "))].filter(Boolean).join(" ");
   const rows = chosen().slice(0, 300);
-  $("#rows").replaceChildren(...(rows.length ? rows.map((row, index) => {
+  // The rows on screen take the new figures in place (common.js patchList).
+  patchList($("#rows"), (rows.length ? rows.map((row, index) => {
     const tr = node("tr", "coin");
+    tr.dataset.key = row.symbol;
     // The server names the coin page and logo for the 1,000 largest coins; the market list fills in the rest.
     const coin = row.id ? { id: row.id, symbol: row.symbol, image: row.image ?? coins.get(row.symbol)?.image ?? null } : coins.get(row.symbol);
     if (coin) tr.addEventListener("click", () => { location.href = coinUrl(coin); });

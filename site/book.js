@@ -11,7 +11,7 @@ const en = {
   stFear: "Fear & Greed:", stNir: "NIR network: miners", stMined: "mined",
   navCoins: "Cryptocurrencies", navCharts: "Market overview", navScreener: "Screeners", navPortfolio: "Portfolio", navNir: "About NIR", search: "Search coins or addresses",
   tabTrends: "Trends", tabDensities: "Order book walls", tabBook: "Order book", tabArbitrage: "Arbitrage", tabLiquidations: "Liquidations", tabListings: "Listings", tabHeatmap: "Heatmap",
-  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", tools: "Tools",
+  title: "Order book", exchange: "Exchange", exchanges: "Exchanges", pair: "Pair", market: "Market", stepLabel: "Price step", tools: "Tools",
   settings: "⚙ Settings", chartSettings: "📈 Chart", tradesFeed: "⚡ Trades feed",
   source: "The book, trades and candles come from the exchanges' open APIs and streams, every 2 seconds. Prices are the exchange's own levels; orders of at least the smallest within the depth show, big ones with a lighter bold row; the totals on top are every order within the depth. Point at a row for the volume from the price through it. Not financial advice.",
   exchangesCredit: "the exchanges' open APIs",
@@ -19,7 +19,7 @@ const en = {
   howItWorks: "How it works", privacy: "Privacy", terms: "Terms", aboutNir: "About the NIR blockchain →",
 };
 const words = {
-  ru: { modes: { single: "Одиночный режим", multi: "Конструктор", stats: "Статистика" }, bid: "Покупка (BID)", ask: "Продажа (ASK)", price: "Цена", amount: "Объём", time: "Время", type: "Тип",
+  ru: { modes: { single: "Одиночный режим", multi: "Конструктор", stats: "Статистика" }, bid: "Покупка (BID)", ask: "Продажа (ASK)", price: "Цена", amount: "Объём", quantity: "Кол-во", sum: "Сумма", stepLabel: "Шаг цены", time: "Время", type: "Тип",
     buy: "BUY", sell: "SELL", loading: "Загружаю стакан…", failed: (name) => `${name}: этой пары нет или биржа не ответила`, none: "Нет уровней больше минимального ордера в пределах глубины.",
     noTrades: "Нет сделок больше минимальной.", total: "Всего в пределах глубины", exchangeCol: "Биржа",
     settingsTitle: "Настройки", chartTitle: "Настройки графика", bookHead: "Стакан", tradesHead: "Лента сделок", more: "Дополнительно",
@@ -38,7 +38,7 @@ const words = {
     tools: { cursor: "Курсор", hline: "Горизонтальная линия: нажмите на график", trend: "Трендовая линия: две точки на графике", ruler: "Линейка: две точки — изменение в % и цене",
       clear: "Стереть рисунки", fit: "Весь график", indicator: "Индикатор" },
     through: (amount) => `Всего от цены до этого уровня: ${amount}` },
-  en: { modes: { single: "Single", multi: "Constructor", stats: "Statistics" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", time: "Time", type: "Type",
+  en: { modes: { single: "Single", multi: "Constructor", stats: "Statistics" }, bid: "Bids", ask: "Asks", price: "Price", amount: "Amount", quantity: "Qty", sum: "Value", stepLabel: "Price step", time: "Time", type: "Type",
     buy: "BUY", sell: "SELL", loading: "Loading the book…", failed: (name) => `${name}: no such pair, or the exchange did not answer`, none: "No levels above the smallest order within the depth.",
     noTrades: "No trades above the smallest.", total: "Total within the depth", exchangeCol: "Exchange",
     settingsTitle: "Settings", chartTitle: "Chart settings", bookHead: "Order book", tradesHead: "Trades feed", more: "More",
@@ -166,10 +166,30 @@ function renderControls() {
   const answered = books.get(cfg.ex)?.data?.quote;
   $("#chart-title").textContent = `${exchanges.find((item) => item.id === cfg.ex)?.name ?? cfg.ex} · ${cfg.base}/${answered ?? cfg.quote}`;
 }
+// The amount column's head says what it counts, as the exchanges write it: "Qty (ETH)", or the money in dollar mode.
+const amountHead = (base) => (cfg.usd ? `${t().sum} (${cfg.quote === "BTC" ? "BTC" : "$"})` : `${t().quantity} (${base})`);
+// The price step, as on the exchanges' books: the exchange's own prices, or 10, 100, 1,000… of its tick.
+function renderStep(first) {
+  const select = $("#step");
+  if (!select || !first) return;
+  const shown = view({ ...first, bids: first.bids.slice(0, 60), asks: first.asks.slice(0, 60) });
+  const tick = cfg.step ? null : 10 ** -shown.digits;
+  const base = tick ?? Number(select.dataset.tick || 0);
+  if (!base) return;
+  select.dataset.tick = String(base);
+  const steps = [1, 10, 50, 100, 500, 1000, 5000, 10000].map((times) => Number((base * times).toPrecision(6))).filter((step) => step < first.price / 20);
+  const key = steps.join(",");
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.replaceChildren(...steps.map((step, index) => Object.assign(node("option", "", index === 0 ? `${step} · ${t().rawStep}` : String(step)), { value: index === 0 ? "" : String(step) })));
+  }
+  select.value = cfg.step ? String(cfg.step) : "";
+}
 function renderConfig() {
   const first = [...books.values()].find((item) => item.data)?.data;
   if (!first) { $("#config").textContent = ""; return; }
   const shown = view(first);
+  renderStep(first);
   $("#config").textContent = t().config({ depth: cfg.depth >= 100 ? t().max : `${cfg.depth}%`, min: unitText(shown.limits.min, cfg.base), big: unitText(shown.limits.big, cfg.base),
     minTrade: unitText(tradeLimits().min, cfg.base), step: cfg.step ? priceText(cfg.step, shown.digits) : t().rawStep });
   // How far the exchange's book reaches: the open answers of some stop a few per cent from the price.
@@ -188,7 +208,7 @@ function sideTable(kind, shown, base) {
   head.innerHTML = `<tr><th class="left"></th><th></th></tr>`;
   head.querySelector("th").textContent = kind === "bid" ? t().bid : t().ask;
   // The unit in the head, so it reads plainly: coins (or dollars in dollar mode).
-  head.querySelectorAll("th")[1].textContent = `${t().amount}, ${cfg.usd ? (cfg.quote === "BTC" ? "btc" : "$") : base.toLowerCase()}`;
+  head.querySelectorAll("th")[1].textContent = amountHead(base);
   const body = node("tbody");
   const sum = node("tr", "bk-total");
   sum.title = t().total;
@@ -221,7 +241,7 @@ function tradesTable(shown, withExchange) {
   const table = node("table", "ex-table bk-trades");
   const head = node("thead");
   const row = node("tr");
-  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [`${t().amount}, ${cfg.usd ? "$" : cfg.base.toLowerCase()}`], [t().type]]) row.append(node("th", left ? "left" : "", label));
+  for (const [label, left] of [[t().time, true], ...(withExchange ? [[t().exchangeCol, true]] : []), [t().price], [amountHead(cfg.base)], [t().type]]) row.append(node("th", left ? "left" : "", label));
   head.append(row);
   const body = node("tbody");
   const list = trades.filter((item) => sizeOf(item.price, item.amount) >= limits.min).slice(0, cfg.tradesCount);
@@ -483,7 +503,7 @@ function renderStats() {
   expected.append(grid, node("p", "muted", words.expectedNote));
   const table = node("table", "ex-table bk-daily");
   const head = node("tr");
-  for (const [label, left] of [[words.date, true], [words.open], [words.high], [words.low], [words.close], [words.change], [words.range], [`${t().amount}, ${cfg.base.toLowerCase()}`]]) head.append(node("th", left ? "left" : "", label));
+  for (const [label, left] of [[words.date, true], [words.open], [words.high], [words.low], [words.close], [words.change], [words.range], [`${t().quantity} (${cfg.base})`]]) head.append(node("th", left ? "left" : "", label));
   const thead = node("thead");
   thead.append(head);
   const body = node("tbody");
@@ -702,6 +722,7 @@ const closeDrawer = () => { $("#drawer").hidden = true; };
 $("#open-settings").addEventListener("click", () => openDrawer("book"));
 $("#open-chart").addEventListener("click", () => openDrawer("chart"));
 $("#toggle-trades").addEventListener("click", () => { cfg.trades = !cfg.trades; saveCfg(); restart(); });
+$("#step").addEventListener("change", () => { cfg.step = Number($("#step").value) || null; saveCfg(); renderBooks(); });
 $("#drawer-close").addEventListener("click", closeDrawer);
 $("#drawer").addEventListener("click", (event) => { if (event.target === $("#drawer")) closeDrawer(); });
 addEventListener("keydown", (event) => { if (event.key === "Escape") closeDrawer(); });
